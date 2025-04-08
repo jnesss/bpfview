@@ -204,7 +204,7 @@ func handleProcessEvent(event *ProcessEvent, bpfObjs *execveObjects) {
 		if enrichedInfo.ContainerID != "" {
 			message += fmt.Sprintf(" container=%s", enrichedInfo.ContainerID)
 		}
-		globalLogger.Info("process", message)
+		globalLogger.Info("process", "%s", message)
 
 		if globalLogger != nil && len(enrichedInfo.Environment) > 0 {
 			globalLogger.LogEnvironment(event, enrichedInfo)
@@ -221,7 +221,7 @@ func handleProcessEvent(event *ProcessEvent, bpfObjs *execveObjects) {
 			duration := enrichedInfo.ExitTime.Sub(enrichedInfo.StartTime)
 			message += fmt.Sprintf(" duration=%s", duration)
 		}
-		globalLogger.Info("process", message)
+		globalLogger.Info("process", "%s", message)
 	}
 
 	// Log to file with proper structured format if logger is available
@@ -685,4 +685,3 @@ func initializeProcessCache() {
 			processCount, cachedCount)
 	}
 }
-
