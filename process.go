@@ -105,23 +105,93 @@ var ignoreExitProcesses = map[string]bool{
 	"kstrp":           true, // Stream parser
 }
 
-// handleProcessEvent processes execution and exit events
 func handleProcessEvent(event *ProcessEvent, bpfObjs *execveObjects) {
-	// ignore kernel processes for which we would never see process EXEC message
-	if event.EventType == EVENT_PROCESS_EXIT {
-		comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
-		if shouldIgnoreProcessExit(comm) {
-			return // Skip this exit event
-		}
+	if event.EventType == EVENT_PROCESS_EXEC {
+		handleProcessExecEvent(event, bpfObjs)
+	} else if event.EventType == EVENT_PROCESS_EXIT {
+		handleProcessExitEvent(event)
+	}
+}
+
+func handleProcessExitEvent(event *ProcessEvent) {
+	// Check if we should ignore this exit
+	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
+	if shouldIgnoreProcessExit(comm) {
+		return
+	}
+
+	// Try to update exit time in the cache
+	exitTime := BpfTimestampToTime(event.Timestamp)
+	if !UpdateProcessExitTime(event.Pid, exitTime) {
+		// Either the process doesn't exist in cache or already has exit time
+		// Sometimes we get multiple EXIT messages from BPF so this is normal, not an error
+		return
 	}
 
 	// Debug log for event details
-	globalLogger.Debug("process", "Processing %s event for PID %d\n",
-		map[uint32]string{
-			EVENT_PROCESS_EXEC: "EXEC",
-			EVENT_PROCESS_EXIT: "EXIT",
-		}[event.EventType],
-		event.Pid)
+	globalLogger.Debug("process", "Processing EXEC event for PID %d\n", event.Pid)
+	globalLogger.Debug("process", "BPF data - Comm: %s, UID: %d, GID: %d\n",
+		string(bytes.TrimRight(event.Comm[:], "\x00")),
+		event.Uid,
+		event.Gid)
+
+	info := &ProcessInfo{
+		PID:      event.Pid,
+		Comm:     comm,
+		UID:      event.Uid,
+		GID:      event.Gid,
+		ExitCode: event.ExitCode,
+		ExitTime: exitTime,
+	}
+
+	if cachedInfo, exists := GetProcessFromCache(event.Pid); exists {
+		// Copy start time for duration calculation and UID
+		info.StartTime = cachedInfo.StartTime
+
+		// Copy other fields for matching purposes (not logging these but still need to match)
+		info.ExePath = cachedInfo.ExePath
+		info.CmdLine = cachedInfo.CmdLine
+		info.WorkingDir = cachedInfo.WorkingDir
+		info.Username = cachedInfo.Username
+		info.ContainerID = cachedInfo.ContainerID
+		info.PPID = cachedInfo.PPID
+	}
+
+	// Filter check AFTER enrichment and cache updates, but BEFORE logging
+	if globalEngine != nil && !globalEngine.ShouldLog(info) {
+		return
+	}
+
+	// For EXIT events
+	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
+	message := fmt.Sprintf("EXIT: pid=%d comm=%s ppid=%d parent=%s path=%s uid=%d gid=%d exit_code=%d",
+		info.PID, info.Comm, info.PPID, parentComm, info.ExePath, info.UID, info.GID, info.ExitCode)
+
+	// Calculate process duration if we have both start and exit times
+	if !info.StartTime.IsZero() && !info.ExitTime.IsZero() {
+		duration := info.ExitTime.Sub(info.StartTime)
+		message += fmt.Sprintf(" duration=%s", duration)
+	}
+
+	globalLogger.Info("process", "%s", message)
+
+	// Log to file with proper structured format if logger is available
+	if globalLogger != nil {
+		globalLogger.LogProcess(event, info)
+	}
+
+	// Remove process from cache one second later after processing EXIT
+	//  This delay preserves the cache for a process exec that might come out of order
+	time.Sleep(1 * time.Second)
+
+	processCacheLock.Lock()
+	delete(processCache, event.Pid)
+	processCacheLock.Unlock()
+}
+
+func handleProcessExecEvent(event *ProcessEvent, bpfObjs *execveObjects) {
+	// Debug log for event details
+	globalLogger.Debug("process", "Processing EXEC event for PID %d\n", event.Pid)
 
 	// Log raw BPF data
 	globalLogger.Debug("process", "BPF data - Comm: %s, Parent: %s, UID: %d, GID: %d\n",
@@ -130,9 +200,9 @@ func handleProcessEvent(event *ProcessEvent, bpfObjs *execveObjects) {
 		event.Uid,
 		event.Gid)
 
-	// For EXEC events, try to get cmdline from BPF map first
+	// try to get cmdline from BPF map first
 	var kernelCmdLine string
-	if event.EventType == EVENT_PROCESS_EXEC && bpfObjs != nil {
+	if bpfObjs != nil {
 		if cmdline, err := LookupCmdline(bpfObjs, event.Pid); err == nil {
 			globalLogger.Debug("process", "Phase 1 - Got cmdline from BPF for PID %d: %s\n", event.Pid, cmdline)
 			kernelCmdLine = cmdline
@@ -141,37 +211,12 @@ func handleProcessEvent(event *ProcessEvent, bpfObjs *execveObjects) {
 		}
 	}
 
-	// Enrich the process event with additional information
+	// Enrich the process event with additional information and save to the cache
 	enrichedInfo := EnrichProcessEvent(event, kernelCmdLine) // Pass the cmdline we already looked up
+	AddOrUpdateProcessCache(event.Pid, enrichedInfo)
 
-	// For EXEC events, store in the process cache for later correlation with EXIT events
-	if event.EventType == EVENT_PROCESS_EXEC {
-		AddOrUpdateProcessCache(event.Pid, enrichedInfo)
-		if globalEngine != nil {
-			globalEngine.processTree.AddProcess(enrichedInfo)
-		}
-	} else if event.EventType == EVENT_PROCESS_EXIT {
-		// For EXIT events, try to retrieve cached info from when the process started
-		if cachedInfo, exists := GetProcessFromCache(event.Pid); exists {
-			// Copy over the missing information that we have from when the process started
-			if enrichedInfo.ExePath == "" {
-				enrichedInfo.ExePath = cachedInfo.ExePath
-			}
-			if enrichedInfo.CmdLine == "" {
-				enrichedInfo.CmdLine = cachedInfo.CmdLine
-			}
-			if enrichedInfo.WorkingDir == "" {
-				enrichedInfo.WorkingDir = cachedInfo.WorkingDir
-			}
-			if enrichedInfo.Username == "" {
-				enrichedInfo.Username = cachedInfo.Username
-			}
-			if enrichedInfo.ContainerID == "" {
-				enrichedInfo.ContainerID = cachedInfo.ContainerID
-			}
-			// Copy start time for duration calculation
-			enrichedInfo.StartTime = cachedInfo.StartTime
-		}
+	if globalEngine != nil {
+		globalEngine.processTree.AddProcess(enrichedInfo)
 	}
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
@@ -179,63 +224,33 @@ func handleProcessEvent(event *ProcessEvent, bpfObjs *execveObjects) {
 		return
 	}
 
-	// Clean up process names
-	comm := enrichedInfo.Comm
+	// Log to console with enhanced information
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
-	eventType := "EXEC"
-	if event.EventType == EVENT_PROCESS_EXIT {
-		eventType = "EXIT"
-	}
-
 	// Log to console with enhanced information
-	if event.EventType == EVENT_PROCESS_EXEC {
-		message := fmt.Sprintf("%s: pid=%d comm=%s ppid=%d parent=%s path=%s uid=%d gid=%d cwd=%s",
-			eventType, enrichedInfo.PID, comm, enrichedInfo.PPID, parentComm, enrichedInfo.ExePath,
-			enrichedInfo.UID, enrichedInfo.GID, enrichedInfo.WorkingDir)
+	message := fmt.Sprintf("EXEC: pid=%d comm=%s ppid=%d parent=%s path=%s uid=%d gid=%d cwd=%s",
+		enrichedInfo.PID, enrichedInfo.Comm, enrichedInfo.PPID, parentComm, enrichedInfo.ExePath,
+		enrichedInfo.UID, enrichedInfo.GID, enrichedInfo.WorkingDir)
 
-		// Add additional enriched information if available
-		if enrichedInfo.CmdLine != "" {
-			message += fmt.Sprintf(" cmdline=\"%s\"", sanitizeCommandLine(enrichedInfo.CmdLine))
-		}
-		if enrichedInfo.Username != "" {
-			message += fmt.Sprintf(" user=%s", enrichedInfo.Username)
-		}
-		if enrichedInfo.ContainerID != "" {
-			message += fmt.Sprintf(" container=%s", enrichedInfo.ContainerID)
-		}
-		globalLogger.Info("process", "%s", message)
+	// Add additional enriched information if available
+	if enrichedInfo.CmdLine != "" {
+		message += fmt.Sprintf(" cmdline=\"%s\"", sanitizeCommandLine(enrichedInfo.CmdLine))
+	}
+	if enrichedInfo.Username != "" {
+		message += fmt.Sprintf(" user=%s", enrichedInfo.Username)
+	}
+	if enrichedInfo.ContainerID != "" {
+		message += fmt.Sprintf(" container=%s", enrichedInfo.ContainerID)
+	}
+	globalLogger.Info("process", "%s", message)
 
-		if globalLogger != nil && len(enrichedInfo.Environment) > 0 {
-			globalLogger.LogEnvironment(event, enrichedInfo)
-		}
-
-	} else if event.EventType == EVENT_PROCESS_EXIT {
-
-		// For EXIT events
-		message := fmt.Sprintf("%s: pid=%d comm=%s ppid=%d parent=%s path=%s uid=%d gid=%d exit_code=%d",
-			eventType, enrichedInfo.PID, comm, enrichedInfo.PPID, parentComm, enrichedInfo.ExePath, enrichedInfo.UID, enrichedInfo.GID, enrichedInfo.ExitCode)
-
-		// Calculate process duration if we have both start and exit times
-		if !enrichedInfo.StartTime.IsZero() && !enrichedInfo.ExitTime.IsZero() {
-			duration := enrichedInfo.ExitTime.Sub(enrichedInfo.StartTime)
-			message += fmt.Sprintf(" duration=%s", duration)
-		}
-		globalLogger.Info("process", "%s", message)
+	if globalLogger != nil && len(enrichedInfo.Environment) > 0 {
+		globalLogger.LogEnvironment(event, enrichedInfo)
 	}
 
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {
 		globalLogger.LogProcess(event, enrichedInfo)
-	}
-
-	if event.EventType == EVENT_PROCESS_EXIT {
-		// Add 1 second delay before removing from cache in case BPF gives us the exit prior to the exec
-		time.Sleep(1 * time.Second)
-
-		processCacheLock.Lock()
-		delete(processCache, event.Pid)
-		processCacheLock.Unlock()
 	}
 }
 
@@ -263,6 +278,26 @@ func GetProcessFromCache(pid uint32) (*ProcessInfo, bool) {
 
 	info, exists := processCache[pid]
 	return info, exists
+}
+
+// UpdateProcessExitTime updates only the exit time for a process in the cache
+func UpdateProcessExitTime(pid uint32, exitTime time.Time) bool {
+	processCacheLock.Lock()
+	defer processCacheLock.Unlock()
+
+	info, exists := processCache[pid]
+	if !exists {
+		return false
+	}
+
+	// Only update if we haven't recorded an exit time yet
+	if !info.ExitTime.IsZero() {
+		return false // Already has exit time
+	}
+
+	info.ExitTime = exitTime
+	processCache[pid] = info
+	return true
 }
 
 // GetUsernameFromUID returns the username for a given UID
@@ -666,3 +701,4 @@ func initializeProcessCache() {
 			processCount, cachedCount)
 	}
 }
+
