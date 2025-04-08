@@ -44,8 +44,9 @@ type readerContext struct {
 }
 
 var (
-	globalLogger *Logger
-	globalEngine *FilterEngine
+	globalLogger     *Logger
+	globalEngine     *FilterEngine
+	globalSessionUid string
 )
 
 var BootTime time.Time
@@ -186,6 +187,10 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.PIDs, "pid", nil, "Filter by process IDs")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.PPIDs, "ppid", nil, "Filter by parent process IDs")
 	rootCmd.PersistentFlags().BoolVar(&config.filterConfig.TrackTree, "tree", false, "Track process tree")
+
+	h := fnv.New32a()
+	h.Write([]byte(fmt.Sprintf("%s-%d", time.Now().Format(time.RFC3339Nano), os.Getpid())))
+	globalSessionUid = fmt.Sprintf("%x", h.Sum32())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -539,4 +544,3 @@ func calculateBootTime() time.Time {
 func BpfTimestampToTime(bpfTimestamp uint64) time.Time {
 	return BootTime.Add(time.Duration(bpfTimestamp))
 }
-

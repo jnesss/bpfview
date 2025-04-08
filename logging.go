@@ -236,23 +236,23 @@ func (l *Logger) log(level LogLevel, component string, format string, args ...in
 }
 
 func (l *Logger) writeProcessHeader() {
-	fmt.Fprintln(l.processLog, "timestamp|uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|cmdline|username|container_id|cwd|start_time|exit_time|exit_code|duration")
+	fmt.Fprintln(l.processLog, "timestamp|sessionid|uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|cmdline|username|container_id|cwd|start_time|exit_time|exit_code|duration")
 }
 
 func (l *Logger) writeNetworkHeader() {
-	fmt.Fprintln(l.networkLog, "timestamp|uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes")
+	fmt.Fprintln(l.networkLog, "timestamp|sessionid|uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes")
 }
 
 func (l *Logger) writeDNSHeader() {
-	fmt.Fprintln(l.dnsLog, "timestamp|uid|conn_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl")
+	fmt.Fprintln(l.dnsLog, "timestamp|sessionid|uid|conn_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl")
 }
 
 func (l *Logger) writeTLSHeader() {
-	fmt.Fprintln(l.tlsLog, "timestamp|uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups")
+	fmt.Fprintln(l.tlsLog, "timestamp|sessionid|uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups")
 }
 
 func (l *Logger) writeEnvHeader() {
-	fmt.Fprintln(l.envLog, "timestamp|uid|pid|comm|env_var")
+	fmt.Fprintln(l.envLog, "timestamp|sessionid|uid|pid|comm|env_var")
 }
 
 func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
@@ -340,10 +340,11 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 	}
 
 	// Write the log entry
-	fmt.Fprintf(l.processLog, "%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
-		event_timeStr, // Event timestamp
-		eventUID,      // Enhanced UID
-		eventType,     // EXEC or EXIT
+	fmt.Fprintf(l.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+		event_timeStr,    // Event timestamp
+		globalSessionUid, // 8 character string identifying this session for correlation
+		eventUID,         // Enhanced UID
+		eventType,        // EXEC or EXIT
 		enrichedInfo.PID,
 		enrichedInfo.PPID,
 		enrichedInfo.UID,
