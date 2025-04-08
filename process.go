@@ -352,18 +352,6 @@ func CollectProcMetadata(pid uint32) *ProcessInfo {
 		globalLogger.Debug("process", "PID %d - Failed to read environment: %v\n", pid, err)
 	}
 
-	// Get username from UID if needed
-	if info.UID > 0 && info.Username == "" {
-		if username := GetUsernameFromUID(info.UID); username != "" {
-			globalLogger.Debug("process", "PID %d - Resolved username for UID %d: %s\n", pid, info.UID, username)
-			info.Username = username
-		} else {
-			globalLogger.Debug("process", "PID %d - Failed to resolve username for UID %d\n", pid, info.UID)
-		}
-	} else if info.UID == 0 {
-		info.Username = "root"
-	}
-
 	// Check for container ID
 	if info.ContainerID == "" {
 		if cgroupData, err := os.ReadFile(fmt.Sprintf("%s/cgroup", procDir)); err == nil {
@@ -459,6 +447,8 @@ func EnrichProcessEvent(event *ProcessEvent, kernelCmdLine string) *ProcessInfo 
 			}
 		}
 
+		info.Username = GetUsernameFromUID(info.UID)
+
 		globalLogger.Debug("process", "%d: BPF kernel data: [%v] [%v]\n", pid, info.CmdLine, info.ExePath)
 
 		// Phase 2: First proc check
@@ -520,7 +510,6 @@ func EnrichProcessEvent(event *ProcessEvent, kernelCmdLine string) *ProcessInfo 
 		// these values only come from /proc metadata, not from kernel mode BPF so take whatever first proc gives us
 		info.WorkingDir = firstProcInfo.WorkingDir
 		info.Environment = firstProcInfo.Environment
-		info.Username = firstProcInfo.Username
 		info.ContainerID = firstProcInfo.ContainerID
 
 		// Wait briefly for exec to complete
@@ -565,16 +554,8 @@ func EnrichProcessEvent(event *ProcessEvent, kernelCmdLine string) *ProcessInfo 
 		if len(secondProcInfo.Environment) > 0 {
 			info.Environment = secondProcInfo.Environment
 		}
-		if len(secondProcInfo.Username) > 0 {
-			info.Username = secondProcInfo.Username
-		}
 		if len(secondProcInfo.ContainerID) > 0 {
 			info.ContainerID = secondProcInfo.ContainerID
-		}
-
-		// Get username if needed
-		if info.Username == "" {
-			info.Username = GetUsernameFromUID(info.UID)
 		}
 
 		// Get absolute path for ExePath if it's not already absolute
