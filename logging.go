@@ -259,13 +259,13 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	// Use the event timestamp directly, which should already be properly converted
-	timestamp := BpfTimestampToTime(event.Timestamp)
+	event_timestamp := BpfTimestampToTime(event.Timestamp)
+	event_timeStr := event_timestamp.Format(time.RFC3339Nano)
 
 	// Generate unique ID
 	h := fnv.New32a()
-	timeStr := timestamp.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", timeStr, enrichedInfo.PID)))
+	start_timeStr := enrichedInfo.StartTime.Format(time.RFC3339Nano)
+	h.Write([]byte(fmt.Sprintf("%s-%d", start_timeStr, enrichedInfo.PID)))
 	if enrichedInfo.ExePath != "" {
 		h.Write([]byte(enrichedInfo.ExePath))
 	}
@@ -283,24 +283,24 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 	}
 
 	parentComm := strings.TrimSpace(string(bytes.TrimRight(event.ParentComm[:], "\x00")))
-	if parentComm == "" {
+	if parentComm == "" || event.EventType == EVENT_PROCESS_EXIT {
 		parentComm = "-"
 	}
 
 	exePath := strings.TrimSpace(enrichedInfo.ExePath)
-	if exePath == "" {
+	if exePath == "" || event.EventType == EVENT_PROCESS_EXIT {
 		exePath = "-"
 	}
 
 	cmdline := strings.TrimSpace(enrichedInfo.CmdLine)
-	if cmdline == "" {
+	if cmdline == "" || event.EventType == EVENT_PROCESS_EXIT {
 		cmdline = "-"
 	} else {
 		cmdline = sanitizeCommandLine(cmdline)
 	}
 
 	username := strings.TrimSpace(enrichedInfo.Username)
-	if username == "" {
+	if username == "" || event.EventType == EVENT_PROCESS_EXIT {
 		username = "-"
 	}
 
@@ -310,7 +310,7 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 	}
 
 	cwd := strings.TrimSpace(enrichedInfo.WorkingDir)
-	if cwd == "" {
+	if cwd == "" || event.EventType == EVENT_PROCESS_EXIT {
 		cwd = "-"
 	}
 
@@ -341,9 +341,9 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 
 	// Write the log entry
 	fmt.Fprintf(l.processLog, "%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
-		timeStr,   // Event timestamp
-		eventUID,  // Enhanced UID
-		eventType, // EXEC or EXIT
+		event_timeStr, // Event timestamp
+		eventUID,      // Enhanced UID
+		eventType,     // EXEC or EXIT
 		enrichedInfo.PID,
 		enrichedInfo.PPID,
 		enrichedInfo.UID,
