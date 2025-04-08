@@ -334,8 +334,13 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 		duration = enrichedInfo.ExitTime.Sub(enrichedInfo.StartTime).String()
 	}
 
+	exitcode := "-"
+	if eventType == "EXIT" {
+		exitcode = fmt.Sprint(enrichedInfo.ExitCode)
+	}
+
 	// Write the log entry
-	fmt.Fprintf(l.processLog, "%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%s\n",
+	fmt.Fprintf(l.processLog, "%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
 		timeStr,   // Event timestamp
 		eventUID,  // Enhanced UID
 		eventType, // EXEC or EXIT
@@ -343,17 +348,17 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 		enrichedInfo.PPID,
 		enrichedInfo.UID,
 		enrichedInfo.GID,
-		comm,                  // Process name
-		parentComm,            // Parent process name
-		exePath,               // Full executable path
-		cmdline,               // Command line with arguments
-		username,              // Username
-		containerID,           // Container ID if available
-		cwd,                   // Current Working Directory
-		startTimeStr,          // Start time (from enrichedInfo)
-		exitTimeStr,           // Exit time (from enrichedInfo)
-		enrichedInfo.ExitCode, // Exit code
-		duration,              // Process duration
+		comm,         // Process name
+		parentComm,   // Parent process name
+		exePath,      // Full executable path
+		cmdline,      // Command line with arguments
+		username,     // Username
+		containerID,  // Container ID if available
+		cwd,          // Current Working Directory
+		startTimeStr, // Start time (from enrichedInfo)
+		exitTimeStr,  // Exit time (from enrichedInfo)
+		exitcode,     // Exit code
+		duration,     // Process duration
 	)
 }
 
@@ -546,4 +551,3 @@ func (l *Logger) LogEnvironment(event *ProcessEvent, enrichedInfo *ProcessInfo) 
 		)
 	}
 }
-
