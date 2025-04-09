@@ -29,7 +29,7 @@ wget https://github.com/jnesss/bpfview/releases/latest/download/bpfview
 # Make it executable
 chmod +x bpfview
 
-# Start monitoring all network traffic with process context
+# Start monitoring all processes and all network traffic
 sudo ./bpfview
 ```
 
