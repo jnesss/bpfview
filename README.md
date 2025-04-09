@@ -1,8 +1,7 @@
-# BPFView: Process-Aware Network Monitoring with Complete Correlation
+# BPFView: Process and Network Activity Correlation
 
-<p align="center">
+
   <strong>Link processes, network flows, DNS queries, and TLS/SNI through grep-friendly structured logs. </strong>
-</p>
 
 [![Build Status](https://github.com/jnesss/bpfview/actions/workflows/ci.yml/badge.svg)](https://github.com/jnesss/bpfview/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/jnesss/bpfview)](LICENSE)
