@@ -366,15 +366,6 @@ Verified platforms:
   * Pre-compiled binary available
   * Built-in BTF support
 
-- Ubuntu 20.04 LTS (kernel 5.4+)
-  * Full feature support
-  * Pre-compiled binary available
-  * BTF support varies by kernel version
-
-- RHEL/CentOS 8.2+ (kernel 4.18+)
-  * Full feature support with kernel 5.8+
-  * Pre-compiled binary available
-  * BTF support requires kernel-devel package
 
 ### Building from Source
 ```bash
