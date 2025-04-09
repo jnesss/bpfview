@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         platform:
-          - name: al2023
+          - name: amazonlinux2023
             kernel: '6.1'
             vmlinux: 'vmlinux-6.1-al2023.h'
             description: 'Amazon Linux 2023 (kernel 6.1)'
@@ -48,11 +48,13 @@ jobs:
     
     - name: Build
       run: |
-        go build -v -o bpfview-${{ matrix.platform.name }}
+        # Include kernel version in filename
+        FILENAME="bpfview-${{ matrix.platform.name }}-kernel${{ matrix.platform.kernel }}"
+        go build -v -o $FILENAME
         # Create checksum
-        sha256sum bpfview-${{ matrix.platform.name }} > bpfview-${{ matrix.platform.name }}.sha256
+        sha256sum $FILENAME > $FILENAME.sha256
         # Create description file
-        echo "BPFView binary for ${{ matrix.platform.description }}" > bpfview-${{ matrix.platform.name }}.txt
+        echo "BPFView binary for ${{ matrix.platform.description }}" > $FILENAME.txt
     
     - name: Test
       run: go test -v ./...
@@ -62,9 +64,9 @@ jobs:
       with:
         name: bpfview-${{ matrix.platform.name }}
         path: |
-          bpfview-${{ matrix.platform.name }}
-          bpfview-${{ matrix.platform.name }}.sha256
-          bpfview-${{ matrix.platform.name }}.txt
+          bpfview-${{ matrix.platform.name }}-kernel${{ matrix.platform.kernel }}
+          bpfview-${{ matrix.platform.name }}-kernel${{ matrix.platform.kernel }}.sha256
+          bpfview-${{ matrix.platform.name }}-kernel${{ matrix.platform.kernel }}.txt
         
   release:
     needs: build
@@ -89,11 +91,15 @@ jobs:
 
         # Determine the appropriate version to download
         if [ -f /etc/amazon-linux-release ]; then
-          BINARY="bpfview-al2023"
-          echo "Detected Amazon Linux 2023"
+          KERNEL=$(uname -r | cut -d'.' -f1-2)
+          BINARY="bpfview-amazonlinux2023-kernel6.1"
+          echo "Detected Amazon Linux 2023 with kernel $KERNEL"
+          echo "Using binary built for kernel 6.1"
         elif [ -f /etc/os-release ] && grep -q "Ubuntu" /etc/os-release; then
-          BINARY="bpfview-ubuntu2404"
-          echo "Detected Ubuntu"
+          KERNEL=$(uname -r | cut -d'.' -f1-2)
+          BINARY="bpfview-ubuntu2404-kernel6.8"
+          echo "Detected Ubuntu with kernel $KERNEL"
+          echo "Using binary built for kernel 6.8"
         else
           echo "Unsupported OS. Please download the appropriate binary manually."
           exit 1
@@ -114,6 +120,9 @@ jobs:
         else
           echo "Run with sudo to install system-wide"
         fi
+
+        echo "Note: This binary is built for the specific kernel version in its filename."
+        echo "Compatibility with other distributions or kernel versions is not guaranteed."
         EOF
         
         chmod +x install.sh
@@ -122,10 +131,10 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          artifacts/bpfview-al2023/bpfview-al2023
-          artifacts/bpfview-al2023/bpfview-al2023.sha256
-          artifacts/bpfview-ubuntu2404/bpfview-ubuntu2404
-          artifacts/bpfview-ubuntu2404/bpfview-ubuntu2404.sha256
+          artifacts/bpfview-amazonlinux2023/bpfview-amazonlinux2023-kernel6.1
+          artifacts/bpfview-amazonlinux2023/bpfview-amazonlinux2023-kernel6.1.sha256
+          artifacts/bpfview-ubuntu2404/bpfview-ubuntu2404-kernel6.8
+          artifacts/bpfview-ubuntu2404/bpfview-ubuntu2404-kernel6.8.sha256
           install.sh
         generate_release_notes: true
       env:
