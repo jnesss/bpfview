@@ -1,2 +1,4 @@
 # Mark vmlinux.h as vendored
 bpf/vmlinux.h linguist-vendored=true
+kernels/vmlinux-6.1-al2023.h linguist-vendored=true
+kernels/vmlinux-6.8-ubuntu.h linguist-vendored=true
