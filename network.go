@@ -88,7 +88,11 @@ func handleNetworkEvent(event *NetworkEvent) {
 	fmt.Printf("          ConnectionID: %s\n", uid)
 
 	if globalLogger != nil {
-		globalLogger.LogNetwork(event)
+		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
+			globalLogger.LogNetwork(event, processinfo)
+		} else {
+			globalLogger.LogNetwork(event, &ProcessInfo{})
+		}
 	}
 }
 
@@ -116,4 +120,3 @@ func loadTlsmonProgram() tlsmonObjects {
 	}
 	return objs
 }
-
