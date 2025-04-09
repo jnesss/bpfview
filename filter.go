@@ -16,13 +16,15 @@ type FilterConfig struct {
 	ExePaths        []string
 	UserNames       []string
 	ContainerIDs    []string
+	BinaryHashes    []string
 	TrackTree       bool
+	HashBinaries    bool
 
 	// Network filters
 	SrcIPs    []string
 	DstIPs    []string
-	SrcPorts  []string // Changed from []uint16
-	DstPorts  []string // Changed from []uint16
+	SrcPorts  []string
+	DstPorts  []string
 	Protocols []string
 
 	// DNS filters
@@ -79,6 +81,7 @@ func NewFilterEngine(config FilterConfig) *FilterEngine {
 		len(config.PPIDs) > 0 ||
 		len(config.CommandNames) > 0 ||
 		len(config.CmdlineContains) > 0 ||
+		len(config.BinaryHashes) > 0 ||
 		config.TrackTree
 
 	// Check network-specific filters
@@ -324,6 +327,29 @@ func (e *FilterEngine) matchProcess(info *ProcessInfo) bool {
 		}
 	}
 
+	// Binary hash matching
+	if len(e.config.BinaryHashes) > 0 {
+		hashMatch := false
+		if info.BinaryHash != "" {
+			for _, hash := range e.config.BinaryHashes {
+				if strings.EqualFold(info.BinaryHash, hash) {
+					hashMatch = true
+					// If we're tracking trees, add this as a root
+					if e.config.TrackTree {
+						e.processTree.AddRoot(info.PID)
+					}
+					break
+				}
+			}
+			if !hashMatch {
+				return false
+			}
+		} else {
+			// No hash available, can't match
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -562,4 +588,3 @@ func matchDomain(domain, pattern string) bool {
 	// Exact match
 	return domain == pattern
 }
-

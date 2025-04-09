@@ -236,7 +236,7 @@ func (l *Logger) log(level LogLevel, component string, format string, args ...in
 }
 
 func (l *Logger) writeProcessHeader() {
-	fmt.Fprintln(l.processLog, "timestamp|sessionid|uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|cmdline|username|container_id|cwd|start_time|exit_time|exit_code|duration")
+	fmt.Fprintln(l.processLog, "timestamp|sessionid|uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|binary_hash|cmdline|username|container_id|cwd|start_time|exit_time|exit_code|duration")
 }
 
 func (l *Logger) writeNetworkHeader() {
@@ -339,8 +339,14 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 		exitcode = fmt.Sprint(enrichedInfo.ExitCode)
 	}
 
+	// Add binary hash field
+	binaryHash := "-"
+	if enrichedInfo.BinaryHash != "" {
+		binaryHash = enrichedInfo.BinaryHash
+	}
+
 	// Write the log entry
-	fmt.Fprintf(l.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+	fmt.Fprintf(l.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
 		event_timeStr,    // Event timestamp
 		globalSessionUid, // 8 character string identifying this session for correlation
 		eventUID,         // Enhanced UID
@@ -352,6 +358,7 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 		comm,         // Process name
 		parentComm,   // Parent process name
 		exePath,      // Full executable path
+		binaryHash,   // Binary MD5 hash
 		cmdline,      // Command line with arguments
 		username,     // Username
 		containerID,  // Container ID if available

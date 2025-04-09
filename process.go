@@ -31,6 +31,7 @@ type ProcessInfo struct {
 	StartTime   time.Time
 	ExitTime    time.Time
 	ExitCode    uint32
+	BinaryHash  string
 }
 
 // Process cache to maintain state between EXEC and EXIT events
@@ -608,6 +609,23 @@ func EnrichProcessEvent(event *ProcessEvent, kernelCmdLine string) *ProcessInfo 
 		if info.ExePath != "" {
 			info.Comm = filepath.Base(info.ExePath)
 		}
+
+		globalLogger.Debug("process", "config: %v exe %v", globalEngine.config, info.ExePath)
+		// If hash binaries is enabled and we have an executable path, calculate hash
+		if globalEngine != nil && globalEngine.config.HashBinaries &&
+			info.ExePath != "" {
+			// Only calculate hash for EXEC events (not EXIT)
+			if event.EventType == EVENT_PROCESS_EXEC {
+				if hash, err := CalculateMD5(info.ExePath); err == nil {
+					info.BinaryHash = hash
+					globalLogger.Debug("process", "Calculated MD5 hash for %s: %s\n",
+						info.ExePath, info.BinaryHash)
+				} else {
+					globalLogger.Debug("process", "Failed to calculate MD5 hash for %s: %v\n",
+						info.ExePath, err)
+				}
+			}
+		}
 	}
 
 	return info
@@ -701,4 +719,3 @@ func initializeProcessCache() {
 			processCount, cachedCount)
 	}
 }
-
