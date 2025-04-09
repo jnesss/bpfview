@@ -236,23 +236,23 @@ func (l *Logger) log(level LogLevel, component string, format string, args ...in
 }
 
 func (l *Logger) writeProcessHeader() {
-	fmt.Fprintln(l.processLog, "timestamp|sessionid|uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|binary_hash|cmdline|username|container_id|cwd|start_time|exit_time|exit_code|duration")
+	fmt.Fprintln(l.processLog, "timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|binary_hash|cmdline|username|container_id|cwd|start_time|exit_time|exit_code|duration")
 }
 
 func (l *Logger) writeNetworkHeader() {
-	fmt.Fprintln(l.networkLog, "timestamp|sessionid|uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes")
+	fmt.Fprintln(l.networkLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes")
 }
 
 func (l *Logger) writeDNSHeader() {
-	fmt.Fprintln(l.dnsLog, "timestamp|sessionid|uid|conn_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl")
+	fmt.Fprintln(l.dnsLog, "timestamp|session_uid|process_uid|network_uid|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl")
 }
 
 func (l *Logger) writeTLSHeader() {
-	fmt.Fprintln(l.tlsLog, "timestamp|sessionid|uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups")
+	fmt.Fprintln(l.tlsLog, "timestamp|sessionid|process_uid|uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups")
 }
 
 func (l *Logger) writeEnvHeader() {
-	fmt.Fprintln(l.envLog, "timestamp|sessionid|uid|pid|comm|env_var")
+	fmt.Fprintln(l.envLog, "timestamp|sessionid|process_uid|uid|pid|comm|env_var")
 }
 
 func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
@@ -370,7 +370,7 @@ func (l *Logger) LogProcess(event *ProcessEvent, enrichedInfo *ProcessInfo) {
 	)
 }
 
-func (l *Logger) LogNetwork(event *NetworkEvent) {
+func (l *Logger) LogNetwork(event *NetworkEvent, processinfo *ProcessInfo) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -388,8 +388,19 @@ func (l *Logger) LogNetwork(event *NetworkEvent) {
 		direction = "<"
 	}
 
-	fmt.Fprintf(l.networkLog, "%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d\n",
+	// Calculate process_uid for correlation
+	h := fnv.New32a()
+	process_start_str := processinfo.StartTime.Format(time.RFC3339Nano)
+	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
+	if processinfo.ExePath != "" {
+		h.Write([]byte(processinfo.ExePath))
+	}
+	processUID := fmt.Sprintf("%x", h.Sum32())
+
+	fmt.Fprintf(l.networkLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d\n",
 		timestamp.Format(time.RFC3339Nano),
+		globalSessionUid, // 8 character string identifying this session for correlation
+		processUID,
 		uid,
 		event.Pid,
 		comm,
@@ -405,33 +416,44 @@ func (l *Logger) LogNetwork(event *NetworkEvent) {
 	)
 }
 
-func (l *Logger) LogDNS(event *UserSpaceDNSEvent) {
+func (l *Logger) LogDNS(event *UserSpaceDNSEvent, processinfo *ProcessInfo) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	uid := fmt.Sprintf("%x", event.Timestamp^uint64(event.Pid))
+	network_uid := generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
 
 	eventType := "QUERY"
 	if event.IsResponse {
 		eventType = "RESPONSE"
 	}
 
+	// Calculate process_uid for correlation
+	h := fnv.New32a()
+	process_start_str := processinfo.StartTime.Format(time.RFC3339Nano)
+	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
+	if processinfo.ExePath != "" {
+		h.Write([]byte(processinfo.ExePath))
+	}
+	processUID := fmt.Sprintf("%x", h.Sum32())
+
 	// For each question, create a log entry
 	for _, q := range event.Questions {
-		fmt.Fprintf(l.dnsLog, "%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d||0\n",
+		fmt.Fprintf(l.dnsLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|-|-\n",
 			timestamp.Format(time.RFC3339Nano),
-			uid,
-			"", // conn_uid (filled in by post-processing)
+			globalSessionUid, // 8 character string identifying this session for correlation
+			processUID,
+			network_uid,
+			event.ConversationID,
 			event.Pid,
 			event.Comm,
 			event.Ppid,
 			event.ParentComm,
 			eventType,
-			0, // dns_flags (filled in by post-processing)
+			event.DNSFlags,
 			q.Name,
 			dnsTypeToString(q.Type),
-			q.Type,
+			event.TransactionID,
 			event.SourceIP.String(),
 			event.SourcePort,
 			event.DestIP.String(),
@@ -454,19 +476,21 @@ func (l *Logger) LogDNS(event *UserSpaceDNSEvent) {
 				answer = fmt.Sprintf("%s record", dnsTypeToString(a.Type))
 			}
 
-			fmt.Fprintf(l.dnsLog, "%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|%s|%d\n",
+			fmt.Fprintf(l.dnsLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|%s|%d\n",
 				timestamp.Format(time.RFC3339Nano),
-				uid,
-				"", // conn_uid
+				globalSessionUid, // 8 character string identifying this session for correlation
+				processUID,
+				network_uid,
+				event.ConversationID,
 				event.Pid,
 				event.Comm,
 				event.Ppid,
 				event.ParentComm,
 				eventType,
-				0, // dns_flags
+				event.DNSFlags,
 				a.Name,
 				dnsTypeToString(a.Type),
-				a.Type,
+				event.TransactionID,
 				event.SourceIP.String(),
 				event.SourcePort,
 				event.DestIP.String(),
