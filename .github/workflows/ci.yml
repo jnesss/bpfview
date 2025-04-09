@@ -11,6 +11,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform:
+          - name: al2023
+            kernel: '6.1'
+            vmlinux: 'vmlinux-6.1-al2023.h'
+            description: 'Amazon Linux 2023 (kernel 6.1)'
+          - name: ubuntu2404
+            kernel: '6.8'
+            vmlinux: 'vmlinux-6.8-ubuntu.h'
+            description: 'Ubuntu 24.04 LTS (kernel 6.8)'
     steps:
     - uses: actions/checkout@v3
     
@@ -24,22 +35,34 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y clang llvm libbpf-dev linux-headers-generic gcc-multilib make
     
+    - name: Setup vmlinux.h
+      run: |
+        cp kernels/${{ matrix.platform.vmlinux }} bpf/vmlinux.h
+    
     - name: Generate eBPF
       env:
         CC: clang
       run: go generate ./...
     
     - name: Build
-      run: go build -v -o bpfview
+      run: |
+        go build -v -o bpfview-${{ matrix.platform.name }}
+        # Create checksum
+        sha256sum bpfview-${{ matrix.platform.name }} > bpfview-${{ matrix.platform.name }}.sha256
+        # Create description file
+        echo "BPFView binary for ${{ matrix.platform.description }}" > bpfview-${{ matrix.platform.name }}.txt
     
     - name: Test
       run: go test -v ./...
       
-    - name: Upload artifact
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: bpfview
-        path: bpfview
+        name: bpfview-${{ matrix.platform.name }}
+        path: |
+          bpfview-${{ matrix.platform.name }}
+          bpfview-${{ matrix.platform.name }}.sha256
+          bpfview-${{ matrix.platform.name }}.txt
         
   release:
     needs: build
@@ -50,7 +73,13 @@ jobs:
       with:
         name: bpfview
         
+    - name: Prepare release files
+      run: |
+        mkdir release
+        cp artifacts/bpfview-*/bpfview-* release/
+        
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: bpfview
+        files: release/*
+        generate_release_notes: true
