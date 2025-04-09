@@ -2,41 +2,11 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"hash/fnv"
 	"net"
 	"strings"
 )
-
-func generateDNSConnID(event *BPFDNSRawEvent) string {
-	// For DNS responses, swap source/dest to match original query
-	srcIP := make(net.IP, 4)
-	dstIP := make(net.IP, 4)
-	binary.BigEndian.PutUint32(srcIP, event.SrcAddr)
-	binary.BigEndian.PutUint32(dstIP, event.DstAddr)
-	srcPort := event.SPort
-	dstPort := event.DPort
-
-	if event.IsResponse != 0 {
-		// Swap src/dst to match query
-		srcIP, dstIP = dstIP, srcIP
-		srcPort, dstPort = dstPort, srcPort
-	}
-
-	// Get transaction ID from DNS header
-	txid := binary.BigEndian.Uint16(event.Data[:2])
-
-	h := fnv.New64a()
-	binary.Write(h, binary.BigEndian, srcIP.To4())
-	binary.Write(h, binary.BigEndian, dstIP.To4())
-	binary.Write(h, binary.BigEndian, srcPort)
-	binary.Write(h, binary.BigEndian, dstPort)
-	binary.Write(h, binary.BigEndian, txid)
-
-	return hex.EncodeToString(h.Sum(nil))
-}
 
 func handleDNSEvent(event *BPFDNSRawEvent) error {
 	// Clean up process names
@@ -53,18 +23,8 @@ func handleDNSEvent(event *BPFDNSRawEvent) error {
 		SourcePort: event.SPort,
 		DestPort:   event.DPort,
 		IsResponse: event.IsResponse != 0,
+		DNSFlags:   event.DNSFlags,
 	}
-
-	// Create IP addresses
-	srcIP := make(net.IP, 4)
-	dstIP := make(net.IP, 4)
-	binary.BigEndian.PutUint32(srcIP, event.SrcAddr)
-	binary.BigEndian.PutUint32(dstIP, event.DstAddr)
-	userEvent.SourceIP = srcIP
-	userEvent.DestIP = dstIP
-
-	// Generate connection ID
-	uid := generateDNSConnID(event)
 
 	// Parse DNS data if available
 	if event.DataLen > 0 {
@@ -101,13 +61,35 @@ func handleDNSEvent(event *BPFDNSRawEvent) error {
 					}
 				}
 			}
+
+			// generate conversation id
+			if !userEvent.IsResponse {
+				// Use transaction ID + source port for outgoing queries
+				h := fnv.New32a()
+				h.Write([]byte(fmt.Sprintf("%04x-%d", userEvent.TransactionID, userEvent.SourcePort)))
+				userEvent.ConversationID = fmt.Sprintf("%x", h.Sum32())
+			} else {
+				// For responses, flip source/dest ports to match the query
+				h := fnv.New32a()
+				h.Write([]byte(fmt.Sprintf("%04x-%d", userEvent.TransactionID, userEvent.DestPort))) // Use dest port which was the source port in the query
+				userEvent.ConversationID = fmt.Sprintf("%x", h.Sum32())
+			}
 		}
 	}
+
+	// Create IP addresses
+	srcIP := uint32ToNetIP(event.SrcAddr)
+	dstIP := uint32ToNetIP(event.DstAddr)
+	userEvent.SourceIP = srcIP
+	userEvent.DestIP = dstIP
 
 	// Filter check before any logging
 	if globalEngine != nil && !globalEngine.matchDNS(&userEvent) {
 		return nil
 	}
+
+	// Generate connection ID (same as network connection uid)
+	uid := generateConnID(event.Pid, event.Ppid, userEvent.SourceIP, userEvent.DestIP, event.SPort, event.DPort)
 
 	// Print the event
 	eventType := "QUERY"
@@ -115,8 +97,8 @@ func handleDNSEvent(event *BPFDNSRawEvent) error {
 		eventType = "RESPONSE"
 	}
 
-	fmt.Printf("[DNS] %s: uid=%s pid=%d comm=%s\n",
-		eventType, uid, userEvent.Pid, userEvent.Comm)
+	fmt.Printf("[DNS] %s: conn_uid=%s tx_id=0x%04x pid=%d comm=%s\n",
+		eventType, uid, userEvent.TransactionID, userEvent.Pid, userEvent.Comm)
 	fmt.Printf("      %s:%d → %s:%d\n",
 		userEvent.SourceIP, userEvent.SourcePort,
 		userEvent.DestIP, userEvent.DestPort)
@@ -151,7 +133,11 @@ func handleDNSEvent(event *BPFDNSRawEvent) error {
 	}
 
 	if globalLogger != nil {
-		globalLogger.LogDNS(&userEvent)
+		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
+			globalLogger.LogDNS(&userEvent, processinfo)
+		} else {
+			globalLogger.LogDNS(&userEvent, &ProcessInfo{})
+		}
 	}
 
 	return nil
@@ -304,4 +290,3 @@ func dnsTypeToString(recordType uint16) string {
 		return fmt.Sprintf("TYPE%d", recordType)
 	}
 }
-
