@@ -69,17 +69,58 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/download-artifact@v4
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
       with:
-        name: bpfview
+        path: artifacts
         
-    - name: Prepare release files
+    - name: List artifacts
+      run: find artifacts -type f | sort
+      
+    - name: Create installation script
       run: |
-        mkdir release
-        cp artifacts/bpfview-*/bpfview-* release/
+        cat > install.sh << 'EOF'
+        #!/bin/bash
+        set -e
+
+        # Determine the appropriate version to download
+        if [ -f /etc/amazon-linux-release ]; then
+          BINARY="bpfview-al2023"
+          echo "Detected Amazon Linux 2023"
+        elif [ -f /etc/os-release ] && grep -q "Ubuntu" /etc/os-release; then
+          BINARY="bpfview-ubuntu2404"
+          echo "Detected Ubuntu"
+        else
+          echo "Unsupported OS. Please download the appropriate binary manually."
+          exit 1
+        fi
+
+        GITHUB_REPO="jnesss/bpfview"
+        LATEST_RELEASE=$(curl -s https://api.github.com/repos/$GITHUB_REPO/releases/latest | grep "tag_name" | cut -d'"' -f4)
+        
+        echo "Downloading $BINARY from release $LATEST_RELEASE..."
+        curl -L "https://github.com/$GITHUB_REPO/releases/download/$LATEST_RELEASE/$BINARY" -o bpfview
+        
+        chmod +x bpfview
+        echo "Downloaded to $(pwd)/bpfview"
+        
+        if [ "$(id -u)" -eq 0 ]; then
+          mv bpfview /usr/local/bin/
+          echo "Installed bpfview to /usr/local/bin/"
+        else
+          echo "Run with sudo to install system-wide"
+        fi
+        EOF
+        
+        chmod +x install.sh
         
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: release/*
+        files: |
+          artifacts/bpfview-al2023/bpfview-al2023
+          artifacts/bpfview-al2023/bpfview-al2023.sha256
+          artifacts/bpfview-ubuntu2404/bpfview-ubuntu2404
+          artifacts/bpfview-ubuntu2404/bpfview-ubuntu2404.sha256
+          install.sh
         generate_release_notes: true
