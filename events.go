@@ -68,9 +68,9 @@ type DNSAnswer struct {
 	Class     uint16
 	TTL       uint32
 	DataLen   uint16
-	IPAddress net.IP    // For A/AAAA records
-	CName     string    // For CNAME records
-	Data      []byte    // For other types
+	IPAddress net.IP // For A/AAAA records
+	CName     string // For CNAME records
+	Data      []byte // For other types
 }
 
 // BPFDNSRawEvent represents the raw event structure from kernel
@@ -108,9 +108,11 @@ type UserSpaceDNSEvent struct {
 	IsResponse bool
 
 	// DNS fields
-	TransactionID uint16
-	Questions     []DNSQuestion
-	Answers       []DNSAnswer
+	ConversationID string
+	DNSFlags       uint16
+	TransactionID  uint16
+	Questions      []DNSQuestion
+	Answers        []DNSAnswer
 }
 
 // TLS event structures
@@ -159,9 +161,9 @@ type UserSpaceTLSEvent struct {
 	SNI           string
 
 	SupportedVersions []uint16
-	CipherSuites     []uint16
-	SupportedGroups  []uint16
-	KeyShareGroups   []uint16
+	CipherSuites      []uint16
+	SupportedGroups   []uint16
+	KeyShareGroups    []uint16
 }
 
 // EventHeader is used for event type routing
