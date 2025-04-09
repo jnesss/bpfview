@@ -374,7 +374,7 @@ func (l *Logger) LogNetwork(event *NetworkEvent) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	timestamp := time.Unix(0, int64(event.Timestamp))
+	timestamp := BpfTimestampToTime(event.Timestamp)
 	uid := generateConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
@@ -409,7 +409,7 @@ func (l *Logger) LogDNS(event *UserSpaceDNSEvent) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	timestamp := time.Unix(0, int64(event.Timestamp))
+	timestamp := BpfTimestampToTime(event.Timestamp)
 	uid := fmt.Sprintf("%x", event.Timestamp^uint64(event.Pid))
 
 	eventType := "QUERY"
@@ -482,7 +482,7 @@ func (l *Logger) LogTLS(event *UserSpaceTLSEvent) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	timestamp := time.Unix(0, int64(event.Timestamp))
+	timestamp := BpfTimestampToTime(event.Timestamp)
 	uid := generateConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
