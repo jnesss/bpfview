@@ -308,10 +308,8 @@ sudo bpfview --sni "api.example.com"
 ### Pre-compiled Binaries
 
 BPFView provides pre-compiled binaries for:
-- Amazon Linux 2023 (kernel 6.1+)
-- Ubuntu 22.04 LTS (kernel 5.15+)
-- Ubuntu 20.04 LTS (kernel 5.4+)
-- RHEL/CentOS 8.2+ (kernel 4.18+)
+- Amazon Linux 2023 (kernel 6.1)
+- Ubuntu 24.04.2 LTS (kernel 6.8)
 
 Download the appropriate binary from our [releases page](https://github.com/jnesss/bpfview/releases).
 
