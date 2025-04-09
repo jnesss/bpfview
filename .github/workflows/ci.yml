@@ -11,6 +11,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         platform:
@@ -68,6 +70,8 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # This is crucial for creating releases
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
@@ -124,3 +128,5 @@ jobs:
           artifacts/bpfview-ubuntu2404/bpfview-ubuntu2404.sha256
           install.sh
         generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
