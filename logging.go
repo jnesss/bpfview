@@ -248,7 +248,7 @@ func (l *Logger) writeDNSHeader() {
 }
 
 func (l *Logger) writeTLSHeader() {
-	fmt.Fprintln(l.tlsLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups")
+	fmt.Fprintln(l.tlsLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash")
 }
 
 func (l *Logger) writeEnvHeader() {
@@ -530,7 +530,19 @@ func (l *Logger) LogTLS(event *UserSpaceTLSEvent, processinfo *ProcessInfo) {
 		supportedGroups[i] = formatSupportedGroup(g)
 	}
 
-	fmt.Fprintf(l.tlsLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%d|%s|%d|%s|%s|%s|%s\n",
+	ja4 := "-"
+	if event.JA4 != "" {
+		ja4 = event.JA4
+	}
+
+	ja4hash := "-"
+	if event.JA4Hash != "" {
+		ja4hash = event.JA4Hash
+	}
+
+	// 	fmt.Fprintln(l.tlsLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash")
+
+	fmt.Fprintf(l.tlsLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%d|%s|%d|%s|%s|%s|%s|%d|%s|%s\n",
 		timestamp.Format(time.RFC3339Nano),
 		globalSessionUid, // 8 character string identifying this session for correlation
 		processUID,
@@ -547,7 +559,9 @@ func (l *Logger) LogTLS(event *UserSpaceTLSEvent, processinfo *ProcessInfo) {
 		event.SNI,
 		strings.Join(cipherSuites, ","),
 		strings.Join(supportedGroups, ","),
-	)
+		event.HandshakeLength,
+		ja4,
+		ja4hash)
 }
 
 func (l *Logger) LogEnvironment(event *ProcessEvent, enrichedInfo *ProcessInfo) {
