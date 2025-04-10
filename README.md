@@ -156,6 +156,7 @@ sudo bpfview --log-timestamp
 
 # Calculate binary hashes of executed binaries
 sudo bpfview --hash-binaries
+
 # Output format selection
 sudo bpfview --format json  # Use JSON format (default: text)
 
