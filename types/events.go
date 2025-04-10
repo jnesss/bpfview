@@ -22,7 +22,10 @@ const (
 	FLOW_EGRESS  = 2
 )
 
-// ProcessEvent represents a process execution or exit event
+// CRITICAL: The following struct layouts must exactly match BPF programs.
+// Any changes require coordinated updates to the corresponding BPF code.
+
+// ProcessEvent layout matches execve.c
 type ProcessEvent struct {
 	EventType  uint32
 	Pid        uint32
@@ -38,7 +41,74 @@ type ProcessEvent struct {
 	_          uint32 // padding for 8-byte alignment
 }
 
-// ProcessInfo contains enriched process information
+// NetworkEvent layout matches netmon.c
+type NetworkEvent struct {
+	EventType  uint32
+	Pid        uint32
+	Ppid       uint32
+	Timestamp  uint64
+	Comm       [16]byte
+	ParentComm [16]byte
+	SrcIP      uint32
+	DstIP      uint32
+	SrcPort    uint16
+	DstPort    uint16
+	Protocol   uint8
+	Direction  uint8
+	BytesCount uint32
+	_          uint32 // padding for 8-byte alignment
+}
+
+// BPFDNSRawEvent layout matches dnsmon.c
+type BPFDNSRawEvent struct {
+	EventType  uint32
+	Pid        uint32
+	Ppid       uint32
+	Timestamp  uint64
+	Comm       [16]byte
+	ParentComm [16]byte
+	SrcAddr    uint32
+	DstAddr    uint32
+	SPort      uint16
+	DPort      uint16
+	IsResponse uint8
+	DNSFlags   uint16
+	DataLen    uint16
+	Data       [512]byte
+}
+
+// BPFTLSEvent layout matches tlsmon.c
+type BPFTLSEvent struct {
+	EventType       uint32
+	Pid             uint32
+	Ppid            uint32
+	Timestamp       uint64
+	Comm            [16]byte
+	ParentComm      [16]byte
+	Version         uint32
+	HandshakeLength uint32
+	SAddrA          uint8
+	SAddrB          uint8
+	SAddrC          uint8
+	SAddrD          uint8
+	DAddrA          uint8
+	DAddrB          uint8
+	DAddrC          uint8
+	DAddrD          uint8
+	SPort           uint16
+	DPort           uint16
+	DataLen         uint16
+	Data            [512]byte
+}
+
+// EventHeader is used for event type routing
+type EventHeader struct {
+	EventType uint32
+}
+
+// The following types can be modified freely as they are not tied to BPF programs
+
+// ProcessInfo represents enriched process information
 type ProcessInfo struct {
 	PID         uint32
 	PPID        uint32
@@ -55,24 +125,6 @@ type ProcessInfo struct {
 	ExitTime    time.Time
 	ExitCode    uint32
 	BinaryHash  string
-}
-
-// NetworkEvent represents a network connection event
-type NetworkEvent struct {
-	EventType  uint32
-	Pid        uint32
-	Ppid       uint32
-	Timestamp  uint64
-	Comm       [16]byte
-	ParentComm [16]byte
-	SrcIP      uint32
-	DstIP      uint32
-	SrcPort    uint16
-	DstPort    uint16
-	Protocol   uint8
-	Direction  uint8
-	BytesCount uint32
-	_          uint32 // padding for 8-byte alignment
 }
 
 // DNS event structures
@@ -95,21 +147,16 @@ type DNSAnswer struct {
 
 // UserSpaceDNSEvent represents parsed DNS data
 type UserSpaceDNSEvent struct {
-	// Process context
-	Pid        uint32
-	Ppid       uint32
-	Timestamp  uint64
-	Comm       string
-	ParentComm string
-
-	// Connection info
-	SourceIP   net.IP
-	DestIP     net.IP
-	SourcePort uint16
-	DestPort   uint16
-	IsResponse bool
-
-	// DNS fields
+	Pid            uint32
+	Ppid           uint32
+	Timestamp      uint64
+	Comm           string
+	ParentComm     string
+	SourceIP       net.IP
+	DestIP         net.IP
+	SourcePort     uint16
+	DestPort       uint16
+	IsResponse     bool
 	ConversationID string
 	DNSFlags       uint16
 	TransactionID  uint16
@@ -119,31 +166,24 @@ type UserSpaceDNSEvent struct {
 
 // UserSpaceTLSEvent represents parsed TLS data
 type UserSpaceTLSEvent struct {
-	// Process context
-	Pid        uint32
-	Ppid       uint32
-	Timestamp  uint64
-	Comm       string
-	ParentComm string
-
-	// Connection info
-	SourceIP   net.IP
-	DestIP     net.IP
-	SourcePort uint16
-	DestPort   uint16
-
-	// TLS fields
-	TLSVersion      uint16
-	HandshakeType   uint8
-	HandshakeLength uint32
-	SNI             string
-
+	Pid               uint32
+	Ppid              uint32
+	Timestamp         uint64
+	Comm              string
+	ParentComm        string
+	SourceIP          net.IP
+	DestIP            net.IP
+	SourcePort        uint16
+	DestPort          uint16
+	TLSVersion        uint16
+	HandshakeType     uint8
+	HandshakeLength   uint32
+	SNI               string
 	SupportedVersions []uint16
 	CipherSuites      []uint16
 	SupportedGroups   []uint16
 	KeyShareGroups    []uint16
-
-	ALPNValues []string
-	JA4        string
-	JA4Hash    string
+	ALPNValues        []string
+	JA4               string
+	JA4Hash           string
 }
