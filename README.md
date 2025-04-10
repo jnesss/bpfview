@@ -256,15 +256,6 @@ BPFView is built with several core design principles in mind:
 5. **Minimal Performance Impact**: Efficient BPF programs with low overhead
 6. **No External Dependencies**: Single binary with no runtime dependencies
 
-## Technical Implementation
-
-BPFView consists of four specialized eBPF programs:
-
-1. **netmon.c**: Network connection tracking with process context
-2. **dnsmon.c**: DNS monitoring with minimal overhead
-3. **execve.c**: Process execution tracking
-4. **tlsmon.c**: TLS handshake analysis with SNI extraction
-
 ## Feature Comparison
 
 | Feature | BPFView | tcpdump | Wireshark | bcc/BPF Tools |
