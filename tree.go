@@ -2,10 +2,12 @@ package main
 
 import (
     "sync"
+
+    "github.com/jnesss/bpfview/types"
 )
 
 type ProcessTree struct {
-    processes map[uint32]*ProcessInfo
+    processes map[uint32]*types.ProcessInfo
     children  map[uint32]map[uint32]bool  // PPID -> set of child PIDs
     roots     map[uint32]bool             // PIDs we're tracking as roots
     mu        sync.RWMutex
@@ -13,13 +15,13 @@ type ProcessTree struct {
 
 func NewProcessTree() *ProcessTree {
     return &ProcessTree{
-        processes: make(map[uint32]*ProcessInfo),
+        processes: make(map[uint32]*types.ProcessInfo),
         children:  make(map[uint32]map[uint32]bool),
         roots:     make(map[uint32]bool),
     }
 }
 
-func (pt *ProcessTree) AddProcess(info *ProcessInfo) {
+func (pt *ProcessTree) AddProcess(info *types.ProcessInfo) {
     pt.mu.Lock()
     defer pt.mu.Unlock()
 

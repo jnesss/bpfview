@@ -29,6 +29,8 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/spf13/cobra"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 type bpfObjects struct {
@@ -376,42 +378,42 @@ func handleEvent(data []byte, rc readerContext) error {
 	//fmt.Printf("\n")
 
 	// Read event type
-	var header EventHeader
+	var header types.EventHeader
 	if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &header); err != nil {
 		return fmt.Errorf("error reading event header: %w", err)
 	}
 
 	// Process based on event type
 	switch header.EventType {
-	case EVENT_PROCESS_EXEC, EVENT_PROCESS_EXIT:
-		var event ProcessEvent
+	case types.EVENT_PROCESS_EXEC, types.EVENT_PROCESS_EXIT:
+		var event types.ProcessEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
 			return fmt.Errorf("error parsing process event: %w", err)
 		}
 		// Pass the execve objects to handleProcessEvent
 		if execObjs, ok := rc.bpfObjects.(execveObjects); ok {
 			// one goroutine per event since process create does /proc lookups and other long stuff
-			go func(event ProcessEvent, execObjs execveObjects) {
+			go func(event types.ProcessEvent, execObjs execveObjects) {
 				handleProcessEvent(&event, &execObjs)
 			}(event, execObjs)
 		}
 
-	case EVENT_NET_CONNECT, EVENT_NET_ACCEPT, EVENT_NET_BIND:
-		var event NetworkEvent
+	case types.EVENT_NET_CONNECT, types.EVENT_NET_ACCEPT, types.EVENT_NET_BIND:
+		var event types.NetworkEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
 			return fmt.Errorf("error parsing network event: %w", err)
 		}
 		handleNetworkEvent(&event)
 
-	case EVENT_DNS:
-		var event BPFDNSRawEvent
+	case types.EVENT_DNS:
+		var event types.BPFDNSRawEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
 			return fmt.Errorf("error parsing DNS event: %w", err)
 		}
 		handleDNSEvent(&event)
 
-	case EVENT_TLS:
-		var event BPFTLSEvent
+	case types.EVENT_TLS:
+		var event types.BPFTLSEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
 			return fmt.Errorf("error parsing TLS event: %w", err)
 		}

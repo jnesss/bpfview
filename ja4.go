@@ -5,6 +5,8 @@ import (
 	"crypto/md5"
 	"fmt"
 	"strings"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 // Extract ALPN values from ClientHello
@@ -134,7 +136,7 @@ func removeGREASE(cipherSuites []uint16) []uint16 {
 }
 
 // CalculateJA4 generates a JA4 fingerprint from a TLS ClientHello
-func CalculateJA4(event *UserSpaceTLSEvent) string {
+func CalculateJA4(event *types.UserSpaceTLSEvent) string {
 	// Only calculate for ClientHello
 	if event.HandshakeType != 0x01 {
 		return ""

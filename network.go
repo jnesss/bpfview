@@ -8,6 +8,8 @@ import (
 	"log"
 	"net"
 	"strings"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 // Helper functions for network event processing
@@ -56,7 +58,7 @@ func generateConnID(pid uint32, ppid uint32, srcIP net.IP, dstIP net.IP, srcPort
 }
 
 // handleNetworkEvent processes network connection events
-func handleNetworkEvent(event *NetworkEvent) {
+func handleNetworkEvent(event *types.NetworkEvent) {
 	// Filter check right at the start
 	if globalEngine != nil && !globalEngine.matchNetwork(event) {
 		return
@@ -66,7 +68,7 @@ func handleNetworkEvent(event *NetworkEvent) {
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 	direction := "→"
-	if event.Direction == FLOW_INGRESS {
+	if event.Direction == types.FLOW_INGRESS {
 		direction = "←"
 	}
 
@@ -86,7 +88,7 @@ func handleNetworkEvent(event *NetworkEvent) {
 		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
 			globalLogger.LogNetwork(event, processinfo)
 		} else {
-			globalLogger.LogNetwork(event, &ProcessInfo{})
+			globalLogger.LogNetwork(event, &types.ProcessInfo{})
 		}
 	}
 }

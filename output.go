@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 // EventFormatter defines the interface for different output formats
@@ -18,10 +20,10 @@ type EventFormatter interface {
 	Initialize() error
 	Close() error
 
-	FormatProcess(event *ProcessEvent, info *ProcessInfo) error
-	FormatNetwork(event *NetworkEvent, info *ProcessInfo) error
-	FormatDNS(event *UserSpaceDNSEvent, info *ProcessInfo) error
-	FormatTLS(event *UserSpaceTLSEvent, info *ProcessInfo) error
+	FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error
+	FormatNetwork(event *types.NetworkEvent, info *types.ProcessInfo) error
+	FormatDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo) error
+	FormatTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error
 }
 
 // TextFormatter implements the original pipe-delimited format
@@ -155,7 +157,7 @@ func (f *TextFormatter) writeEnvHeader() {
 	fmt.Fprintln(f.envLog, "timestamp|sessionid|process_uid|uid|pid|comm|env_var")
 }
 
-func (f *TextFormatter) FormatProcess(event *ProcessEvent, info *ProcessInfo) error {
+func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -171,7 +173,7 @@ func (f *TextFormatter) FormatProcess(event *ProcessEvent, info *ProcessInfo) er
 	eventUID := fmt.Sprintf("%x", h.Sum32())
 
 	eventType := "EXEC"
-	if event.EventType == EVENT_PROCESS_EXIT {
+	if event.EventType == types.EVENT_PROCESS_EXIT {
 		eventType = "EXIT"
 	}
 
@@ -253,7 +255,7 @@ func formatTimeField(t time.Time) string {
 	return "-"
 }
 
-func (f *TextFormatter) FormatNetwork(event *NetworkEvent, info *ProcessInfo) error {
+func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.ProcessInfo) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -267,7 +269,7 @@ func (f *TextFormatter) FormatNetwork(event *NetworkEvent, info *ProcessInfo) er
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
 	direction := ">"
-	if event.Direction == FLOW_INGRESS {
+	if event.Direction == types.FLOW_INGRESS {
 		direction = "<"
 	}
 
@@ -301,7 +303,7 @@ func (f *TextFormatter) FormatNetwork(event *NetworkEvent, info *ProcessInfo) er
 	return err
 }
 
-func (f *TextFormatter) FormatDNS(event *UserSpaceDNSEvent, info *ProcessInfo) error {
+func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -384,7 +386,7 @@ func (f *TextFormatter) FormatDNS(event *UserSpaceDNSEvent, info *ProcessInfo) e
 	return nil
 }
 
-func (f *TextFormatter) FormatTLS(event *UserSpaceTLSEvent, info *ProcessInfo) error {
+func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -438,7 +440,7 @@ func (f *TextFormatter) FormatTLS(event *UserSpaceTLSEvent, info *ProcessInfo) e
 	return err
 }
 
-func (f *TextFormatter) formatEnvironment(event *ProcessEvent, info *ProcessInfo) error {
+func (f *TextFormatter) formatEnvironment(event *types.ProcessEvent, info *types.ProcessInfo) error {
 	if len(info.Environment) == 0 {
 		return nil
 	}
@@ -553,7 +555,7 @@ func extractTimestampAndSessionUID(logPath string) (timestamp, sessionUID string
 	return timestamp, sessionUID
 }
 
-func formatDNSAnswer(answer *DNSAnswer) string {
+func formatDNSAnswer(answer *types.DNSAnswer) string {
 	switch answer.Type {
 	case 1, 28: // A or AAAA
 		if answer.IPAddress != nil {

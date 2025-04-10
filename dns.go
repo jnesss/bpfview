@@ -6,15 +6,17 @@ import (
 	"hash/fnv"
 	"net"
 	"strings"
+
+	"github.com/jnesss/bpfview/types"
 )
 
-func handleDNSEvent(event *BPFDNSRawEvent) error {
+func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	// Clean up process names
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
 	// Create userspace event
-	userEvent := UserSpaceDNSEvent{
+	userEvent := types.UserSpaceDNSEvent{
 		Pid:        event.Pid,
 		Ppid:       event.Ppid,
 		Timestamp:  event.Timestamp,
@@ -138,7 +140,7 @@ func handleDNSEvent(event *BPFDNSRawEvent) error {
 		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
 			return globalLogger.LogDNS(&userEvent, processinfo)
 		} else {
-			return globalLogger.LogDNS(&userEvent, &ProcessInfo{})
+			return globalLogger.LogDNS(&userEvent, &types.ProcessInfo{})
 		}
 	}
 
@@ -146,8 +148,8 @@ func handleDNSEvent(event *BPFDNSRawEvent) error {
 }
 
 // DNS parsing helper functions
-func parseDNSQuestion(data []byte, offset int) (DNSQuestion, int) {
-	var question DNSQuestion
+func parseDNSQuestion(data []byte, offset int) (types.DNSQuestion, int) {
+	var question types.DNSQuestion
 
 	name, newOffset := parseDNSName(data, offset)
 	if newOffset <= offset {
@@ -165,8 +167,8 @@ func parseDNSQuestion(data []byte, offset int) (DNSQuestion, int) {
 	return question, newOffset + 4
 }
 
-func parseDNSAnswer(data []byte, offset int) (DNSAnswer, int) {
-	var answer DNSAnswer
+func parseDNSAnswer(data []byte, offset int) (types.DNSAnswer, int) {
+	var answer types.DNSAnswer
 
 	name, newOffset := parseDNSName(data, offset)
 	if newOffset <= offset {
