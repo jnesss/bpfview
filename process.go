@@ -165,16 +165,19 @@ func handleProcessExitEvent(event *ProcessEvent) {
 
 	// For EXIT events
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
-	message := fmt.Sprintf("EXIT: pid=%d comm=%s ppid=%d parent=%s path=%s uid=%d gid=%d exit_code=%d",
-		info.PID, info.Comm, info.PPID, parentComm, info.ExePath, info.UID, info.GID, info.ExitCode)
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "EXIT: PID=%d comm=%s\n", info.PID, info.Comm)
+	fmt.Fprintf(&msg, "      Parent: [%d] %s\n", info.PPID, parentComm)
+	fmt.Fprintf(&msg, "      User: %s (%d/%d)\n", info.Username, info.UID, info.GID)
+	fmt.Fprintf(&msg, "      Exit Code: %d", info.ExitCode)
 
-	// Calculate process duration if we have both start and exit times
+	// Add duration if available
 	if !info.StartTime.IsZero() && !info.ExitTime.IsZero() {
 		duration := info.ExitTime.Sub(info.StartTime)
-		message += fmt.Sprintf(" duration=%s", duration)
+		fmt.Fprintf(&msg, "\n      Duration: %s", duration)
 	}
 
-	globalLogger.Info("process", "%s", message)
+	globalLogger.Info("process", "%s", msg.String())
 
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {
@@ -228,26 +231,23 @@ func handleProcessExecEvent(event *ProcessEvent, bpfObjs *execveObjects) {
 	// Log to console with enhanced information
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
-	// Log to console with enhanced information
-	message := fmt.Sprintf("EXEC: pid=%d comm=%s ppid=%d parent=%s path=%s uid=%d gid=%d cwd=%s",
-		enrichedInfo.PID, enrichedInfo.Comm, enrichedInfo.PPID, parentComm, enrichedInfo.ExePath,
-		enrichedInfo.UID, enrichedInfo.GID, enrichedInfo.WorkingDir)
-
-	// Add additional enriched information if available
+	// Build the message using strings.Builder
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "EXEC: PID=%d comm=%s\n", enrichedInfo.PID, enrichedInfo.Comm)
+	fmt.Fprintf(&msg, "      Parent: [%d] %s\n", enrichedInfo.PPID, parentComm)
+	fmt.Fprintf(&msg, "      User: %s (%d/%d)\n", enrichedInfo.Username, enrichedInfo.UID, enrichedInfo.GID)
+	fmt.Fprintf(&msg, "      Path: %s", enrichedInfo.ExePath)
+	if enrichedInfo.WorkingDir != "" {
+		fmt.Fprintf(&msg, "\n      CWD: %s", enrichedInfo.WorkingDir)
+	}
 	if enrichedInfo.CmdLine != "" {
-		message += fmt.Sprintf(" cmdline=\"%s\"", sanitizeCommandLine(enrichedInfo.CmdLine))
+		fmt.Fprintf(&msg, "\n      Command: %s", sanitizeCommandLine(enrichedInfo.CmdLine))
 	}
-	if enrichedInfo.Username != "" {
-		message += fmt.Sprintf(" user=%s", enrichedInfo.Username)
+	if enrichedInfo.ContainerID != "" && enrichedInfo.ContainerID != "-" {
+		fmt.Fprintf(&msg, "\n      Container: %s", enrichedInfo.ContainerID)
 	}
-	if enrichedInfo.ContainerID != "" {
-		message += fmt.Sprintf(" container=%s", enrichedInfo.ContainerID)
-	}
-	globalLogger.Info("process", "%s", message)
 
-	if globalLogger != nil && len(enrichedInfo.Environment) > 0 {
-		globalLogger.LogEnvironment(event, enrichedInfo)
-	}
+	globalLogger.Info("process", "%s", msg.String())
 
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {

@@ -43,7 +43,12 @@ Watch a complete HTTP request unfold across all monitoring dimensions:
 
 ```
 # Process execution with complete context
-[PROCESS] EXEC: pid=2904710 comm=curl ppid=2877411 parent=bash path=/usr/bin/curl uid=1000 gid=1000 cwd=/home/ec2-user/bpfview/logs cmdline="curl https://www.apple.com" user=ec2-user
+[PROCESS] EXEC: PID=2904710 comm=curl
+      Parent: [2877411] bash
+      User: ec2-user (1000/1000)
+      Path: /usr/bin/curl
+      CWD: /home/ec2-user/bpfview/logs
+      Command: curl https://www.apple.com
 
 # DNS resolution with transaction tracking
 [DNS] QUERY: conn_uid=b6e5f8077682f66e tx_id=0xaea6 pid=2904710 comm=curl
@@ -61,7 +66,6 @@ Watch a complete HTTP request unfold across all monitoring dimensions:
 # Network connection with attribution
 [NETWORK] Process: curl (PID: 2904710) Parent: bash (PPID: 2877411)
           172.31.44.65:41054 → 23.221.245.25:443 TCP 60 bytes
-          ConnectionID: db79358f24023b06
 
 # TLS handshake details
 [TLS] UID: db79358f24023b06 Process: curl (PID: 2904710, PPID: 2877411, Parent: bash)
@@ -77,7 +81,11 @@ Watch a complete HTTP request unfold across all monitoring dimensions:
       Key Share Groups: x25519
 
 # Process exit with duration
-[PROCESS] EXIT: pid=2904710 comm=curl ppid=2877411 parent=bash uid=1000 gid=1000 exit_code=0 duration=42.046208ms
+[PROCESS] EXIT: PID=2904710 comm=curl
+      Parent: [2877411] bash
+      User: ec2-user (1000/1000)
+      Exit Code: 0
+      Duration: 42.046208ms
 ```
 
 ## Command Line Interface

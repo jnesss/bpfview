@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"strings"
 )
 
 func formatTlsVersion(input uint16) string {
@@ -84,72 +85,61 @@ func handleTLSEvent(event *BPFTLSEvent) {
 	}
 
 	// Print the event
-	fmt.Printf("[TLS] UID: %s Process: %s (PID: %d, PPID: %d, Parent: %s)\n",
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "UID: %s Process: %s (PID: %d, PPID: %d, Parent: %s)\n",
 		uid, userEvent.Comm, userEvent.Pid, userEvent.Ppid, userEvent.ParentComm)
-	fmt.Printf("      %s:%d → %s:%d\n",
+	fmt.Fprintf(&msg, "      %s:%d → %s:%d",
 		userEvent.SourceIP, userEvent.SourcePort,
 		userEvent.DestIP, userEvent.DestPort)
 
 	if userEvent.TLSVersion != 0 {
-		fmt.Printf("      Version: %v\n", formatTlsVersion(userEvent.TLSVersion))
+		fmt.Fprintf(&msg, "\n      Version: %v", formatTlsVersion(userEvent.TLSVersion))
 	}
 	if userEvent.SNI != "" {
-		fmt.Printf("      SNI: %s\n", userEvent.SNI)
+		fmt.Fprintf(&msg, "\n      SNI: %s", userEvent.SNI)
 	}
-	fmt.Printf("      ClientHello len: %d\n", userEvent.HandshakeLength)
+	fmt.Fprintf(&msg, "\n      ClientHello len: %d", userEvent.HandshakeLength)
 
 	// Print JA4 information for ClientHello
 	if userEvent.JA4 != "" {
-		fmt.Printf("      JA4: %s\n", userEvent.JA4)
+		fmt.Fprintf(&msg, "\n      JA4: %s", userEvent.JA4)
 	}
 	if userEvent.JA4Hash != "" {
-		fmt.Printf("      JA4 Hash: %s\n", userEvent.JA4Hash)
+		fmt.Fprintf(&msg, "\n      JA4 Hash: %s", userEvent.JA4Hash)
 	}
 
 	// Print additional TLS information
 	if len(userEvent.SupportedVersions) > 0 {
-		fmt.Printf("      Supported Versions: ")
+		fmt.Fprintf(&msg, "\n      Supported Versions: ")
 		for i, version := range userEvent.SupportedVersions {
 			if i > 0 {
-				fmt.Printf(", ")
+				fmt.Fprintf(&msg, ", ")
 			}
-			fmt.Printf("%s", formatTlsVersion(version))
+			fmt.Fprintf(&msg, "%s", formatTlsVersion(version))
 		}
-		fmt.Printf("\n")
 	}
 
 	if len(userEvent.CipherSuites) > 0 {
-		fmt.Printf("      Cipher Suites: ")
+		fmt.Fprintf(&msg, "\n      Cipher Suites: ")
 		for i, cipher := range userEvent.CipherSuites {
 			if i > 0 {
-				fmt.Printf(", ")
+				fmt.Fprintf(&msg, ", ")
 			}
-			fmt.Printf("0x%04x", cipher)
+			fmt.Fprintf(&msg, "0x%04x", cipher)
 		}
-		fmt.Printf("\n")
 	}
 
 	if len(userEvent.SupportedGroups) > 0 {
-		fmt.Printf("      Supported Groups: ")
+		fmt.Fprintf(&msg, "\n      Supported Groups: ")
 		for i, group := range userEvent.SupportedGroups {
 			if i > 0 {
-				fmt.Printf(", ")
+				fmt.Fprintf(&msg, ", ")
 			}
-			fmt.Printf("%s", formatSupportedGroup(group))
+			fmt.Fprintf(&msg, "%s", formatSupportedGroup(group))
 		}
-		fmt.Printf("\n")
 	}
 
-	if len(userEvent.KeyShareGroups) > 0 {
-		fmt.Printf("      Key Share Groups: ")
-		for i, group := range userEvent.KeyShareGroups {
-			if i > 0 {
-				fmt.Printf(", ")
-			}
-			fmt.Printf("%s", formatSupportedGroup(group))
-		}
-		fmt.Printf("\n")
-	}
+	globalLogger.Info("tls", "%s", msg.String())
 
 	if globalLogger != nil {
 		if processinfo, exists := GetProcessFromCache(event.Pid); exists {

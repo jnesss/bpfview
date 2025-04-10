@@ -97,46 +97,48 @@ func handleDNSEvent(event *BPFDNSRawEvent) error {
 		eventType = "RESPONSE"
 	}
 
-	fmt.Printf("[DNS] %s: conn_uid=%s tx_id=0x%04x pid=%d comm=%s\n",
+	// Build the message using strings.Builder for efficiency
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "%s: conn_uid=%s tx_id=0x%04x pid=%d comm=%s\n",
 		eventType, uid, userEvent.TransactionID, userEvent.Pid, userEvent.Comm)
-	fmt.Printf("      %s:%d → %s:%d\n",
+	fmt.Fprintf(&msg, "      %s:%d → %s:%d\n",
 		userEvent.SourceIP, userEvent.SourcePort,
 		userEvent.DestIP, userEvent.DestPort)
-	fmt.Printf("      DNS Flags: 0x%04x, QR bit: %v\n",
+	fmt.Fprintf(&msg, "      DNS Flags: 0x%04x, QR bit: %v",
 		event.DNSFlags, (event.DNSFlags&0x8000) != 0)
 
-	// Print questions
+	// Always show questions for both queries and responses
 	for i, q := range userEvent.Questions {
-		fmt.Printf("      Q%d: %s (Type: %s)\n",
+		fmt.Fprintf(&msg, "\n      Q%d: %s (Type: %s)",
 			i+1, q.Name, dnsTypeToString(q.Type))
 	}
 
-	// Print answers for responses
+	// Show answers for responses
 	if userEvent.IsResponse {
 		for i, a := range userEvent.Answers {
-			fmt.Printf("      A%d: %s -> ", i+1, a.Name)
+			fmt.Fprintf(&msg, "\n      A%d: %s -> ", i+1, a.Name)
 			switch a.Type {
-			case 1: // A Record
+			case 1, 28: // A or AAAA
 				if a.IPAddress != nil {
-					fmt.Printf("%s (TTL: %ds)\n", a.IPAddress.String(), a.TTL)
+					fmt.Fprintf(&msg, "%s (TTL: %ds)", a.IPAddress.String(), a.TTL)
 				}
 			case 5: // CNAME
-				fmt.Printf("%s (TTL: %ds)\n", a.CName, a.TTL)
-			case 28: // AAAA
-				if a.IPAddress != nil {
-					fmt.Printf("%s (TTL: %ds)\n", a.IPAddress.String(), a.TTL)
-				}
+				fmt.Fprintf(&msg, "%s (TTL: %ds)", a.CName, a.TTL)
 			default:
-				fmt.Printf("%s record (TTL: %ds)\n", dnsTypeToString(a.Type), a.TTL)
+				fmt.Fprintf(&msg, "%s record (TTL: %ds)", dnsTypeToString(a.Type), a.TTL)
 			}
 		}
 	}
 
+	// Log the complete message through the logger
+	globalLogger.Info("dns", "%s", msg.String())
+
+	// Handle the file logging through the formatter
 	if globalLogger != nil {
 		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
-			globalLogger.LogDNS(&userEvent, processinfo)
+			return globalLogger.LogDNS(&userEvent, processinfo)
 		} else {
-			globalLogger.LogDNS(&userEvent, &ProcessInfo{})
+			return globalLogger.LogDNS(&userEvent, &ProcessInfo{})
 		}
 	}
 

@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"log"
 	"net"
+	"strings"
 )
 
 // Helper functions for network event processing
@@ -64,28 +65,22 @@ func handleNetworkEvent(event *NetworkEvent) {
 	// Clean up process names
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
-
-	// Convert uint32 IPs to net.IP for generateConnID
-	srcIP := uint32ToNetIP(event.SrcIP)
-	dstIP := uint32ToNetIP(event.DstIP)
-
-	// Generate connection ID
-	uid := generateConnID(event.Pid, event.Ppid, srcIP, dstIP, event.SrcPort, event.DstPort)
-
 	direction := "→"
 	if event.Direction == FLOW_INGRESS {
 		direction = "←"
 	}
 
-	fmt.Printf("[NETWORK] Process: %s (PID: %d) Parent: %s (PPID: %d)\n",
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "Process: %s (PID: %d) Parent: %s (PPID: %d)\n",
 		comm, event.Pid, parentComm, event.Ppid)
-	fmt.Printf("          %s:%d %s %s:%d %s %d bytes\n",
+	fmt.Fprintf(&msg, "      %s:%d %s %s:%d %s %d bytes",
 		ipToString(event.SrcIP), event.SrcPort,
 		direction,
 		ipToString(event.DstIP), event.DstPort,
 		protocolToString(event.Protocol),
 		event.BytesCount)
-	fmt.Printf("          ConnectionID: %s\n", uid)
+
+	globalLogger.Info("network", "%s", msg.String())
 
 	if globalLogger != nil {
 		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
