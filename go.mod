@@ -3,6 +3,7 @@ module bpfview
 go 1.24.1
 
 replace github.com/jnesss/bpfview/types => ./types
+replace github.com/jnesss/bpfview/outputformats => ./outputformats
 
 require (
 	github.com/cilium/ebpf v0.18.0
