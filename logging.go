@@ -248,7 +248,7 @@ func (l *Logger) writeDNSHeader() {
 }
 
 func (l *Logger) writeTLSHeader() {
-	fmt.Fprintln(l.tlsLog, "timestamp|sessionid|process_uid|uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups")
+	fmt.Fprintln(l.tlsLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups")
 }
 
 func (l *Logger) writeEnvHeader() {
@@ -502,14 +502,21 @@ func (l *Logger) LogDNS(event *UserSpaceDNSEvent, processinfo *ProcessInfo) {
 	}
 }
 
-func (l *Logger) LogTLS(event *UserSpaceTLSEvent) {
+func (l *Logger) LogTLS(event *UserSpaceTLSEvent, processinfo *ProcessInfo) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	uid := generateConnID(event.Pid, event.Ppid,
-		event.SourceIP, event.DestIP,
-		event.SourcePort, event.DestPort)
+	network_uid := generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+
+	// Calculate process_uid for correlation
+	h := fnv.New32a()
+	process_start_str := processinfo.StartTime.Format(time.RFC3339Nano)
+	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
+	if processinfo.ExePath != "" {
+		h.Write([]byte(processinfo.ExePath))
+	}
+	processUID := fmt.Sprintf("%x", h.Sum32())
 
 	// Format cipher suites
 	cipherSuites := make([]string, len(event.CipherSuites))
@@ -523,9 +530,11 @@ func (l *Logger) LogTLS(event *UserSpaceTLSEvent) {
 		supportedGroups[i] = formatSupportedGroup(g)
 	}
 
-	fmt.Fprintf(l.tlsLog, "%s|%s|%d|%s|%d|%s|%s|%d|%s|%d|%s|%s|%s|%s\n",
+	fmt.Fprintf(l.tlsLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%d|%s|%d|%s|%s|%s|%s\n",
 		timestamp.Format(time.RFC3339Nano),
-		uid,
+		globalSessionUid, // 8 character string identifying this session for correlation
+		processUID,
+		network_uid,
 		event.Pid,
 		event.Comm,
 		event.Ppid,

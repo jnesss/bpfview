@@ -133,7 +133,11 @@ func handleTLSEvent(event *BPFTLSEvent) {
 	}
 
 	if globalLogger != nil {
-		globalLogger.LogTLS(&userEvent)
+		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
+			globalLogger.LogTLS(&userEvent, processinfo)
+		} else {
+			globalLogger.LogTLS(&userEvent, &ProcessInfo{})
+		}
 	}
 }
 
@@ -521,4 +525,3 @@ func extractKeyShareGroups(data []byte) []uint16 {
 	}
 	return groups
 }
-
