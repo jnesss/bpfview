@@ -37,15 +37,16 @@ func handleTLSEvent(event *BPFTLSEvent) {
 
 	// Construct userspace event
 	userEvent := UserSpaceTLSEvent{
-		Pid:        event.Pid,
-		Ppid:       event.Ppid,
-		Timestamp:  event.Timestamp,
-		Comm:       comm,
-		ParentComm: parentComm,
-		SourceIP:   srcIP,
-		DestIP:     dstIP,
-		SourcePort: event.SPort,
-		DestPort:   event.DPort,
+		Pid:             event.Pid,
+		Ppid:            event.Ppid,
+		Timestamp:       event.Timestamp,
+		Comm:            comm,
+		ParentComm:      parentComm,
+		SourceIP:        srcIP,
+		DestIP:          dstIP,
+		SourcePort:      event.SPort,
+		DestPort:        event.DPort,
+		HandshakeLength: event.HandshakeLength,
 	}
 
 	// Parse TLS data if available
@@ -66,6 +67,15 @@ func handleTLSEvent(event *BPFTLSEvent) {
 		userEvent.CipherSuites = extractCipherSuites(event.Data[:actualDataLen], 10)
 		userEvent.SupportedGroups = extractSupportedGroups(event.Data[:actualDataLen])
 		userEvent.KeyShareGroups = extractKeyShareGroups(event.Data[:actualDataLen])
+
+		// Add ALPN extraction for JA4 fingerprinting
+		userEvent.ALPNValues = extractALPN(event.Data[:actualDataLen])
+
+		if userEvent.HandshakeType == 0x01 {
+			userEvent.JA4 = CalculateJA4(&userEvent)
+			userEvent.JA4Hash = CalculateJA4Hash(userEvent.JA4)
+		}
+
 	}
 
 	// Filter check before any logging
@@ -85,6 +95,15 @@ func handleTLSEvent(event *BPFTLSEvent) {
 	}
 	if userEvent.SNI != "" {
 		fmt.Printf("      SNI: %s\n", userEvent.SNI)
+	}
+	fmt.Printf("      ClientHello len: %d\n", userEvent.HandshakeLength)
+
+	// Print JA4 information for ClientHello
+	if userEvent.JA4 != "" {
+		fmt.Printf("      JA4: %s\n", userEvent.JA4)
+	}
+	if userEvent.JA4Hash != "" {
+		fmt.Printf("      JA4 Hash: %s\n", userEvent.JA4Hash)
 	}
 
 	// Print additional TLS information
