@@ -63,6 +63,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "bpfview",
 		Short: "Process and network monitoring tool",
+		Long:  `BPFView provides process attribution for network connections, DNS queries, and TLS handshakes.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Enable debug output from the verifier
 			os.Setenv("LIBBPF_STRICT_MODE", "1")
@@ -183,12 +184,8 @@ func main() {
 		},
 	}
 
-	// Add flags
-	rootCmd.PersistentFlags().StringVar(&config.logLevel, "log-level", "info", "Log level (error, warning, info, debug, trace)")
-	rootCmd.PersistentFlags().BoolVar(&config.showTimestamp, "log-timestamp", false, "Show timestamps in console logs")
-	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
-
-	// Add filter flags
+	// Just use your existing flag definitions, but organize them with comments
+	// Process filters
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.CommandNames, "comm", nil, "Filter by command names")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.PIDs, "pid", nil, "Filter by process IDs")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.PPIDs, "ppid", nil, "Filter by parent process IDs")
@@ -196,8 +193,48 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.UserNames, "user", nil, "Filter by username")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExePaths, "exe", nil, "Filter by executable path (exact or prefix)")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ContainerIDs, "container-id", nil, "Filter by container ID (use '*' to match any container)")
-
 	rootCmd.PersistentFlags().BoolVar(&config.filterConfig.TrackTree, "tree", false, "Track process tree")
+	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
+
+	// Network filters
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.Protocols, "protocol", nil, "Filter by protocol (TCP, UDP, ICMP)")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.SrcIPs, "src-ip", nil, "Filter by source IP address")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.DstIPs, "dst-ip", nil, "Filter by destination IP address")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.SrcPorts, "sport", nil, "Filter by source port")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.DstPorts, "dport", nil, "Filter by destination port")
+
+	// Output options
+	rootCmd.PersistentFlags().StringVar(&config.logLevel, "log-level", "info", "Log level (error, warning, info, debug, trace)")
+	rootCmd.PersistentFlags().BoolVar(&config.showTimestamp, "log-timestamp", false, "Show timestamps in console logs")
+
+	rootCmd.SetUsageTemplate(`Usage:
+  {{.CommandPath}} [flags]
+
+Process Filters:
+  --comm strings           Filter by command names
+  --pid strings            Filter by process IDs
+  --ppid strings           Filter by parent process IDs
+  --binary-hash strings    Filter by MD5 hash of the executable
+  --user strings           Filter by username
+  --exe strings            Filter by executable path (exact or prefix)
+  --container-id strings   Filter by container ID (use '*' to match any container)
+  --tree                   Track process tree
+
+Network Filters:
+  --protocol strings       Filter by protocol (TCP, UDP, ICMP)
+  --src-ip strings         Filter by source IP address
+  --dst-ip strings         Filter by destination IP address
+  --sport strings          Filter by source port
+  --dport strings          Filter by destination port
+
+Output Options:
+  --log-level string       Log level (error, warning, info, debug, trace) (default "info")
+  --log-timestamp          Show timestamps in console logs
+  --hash-binaries          Include MD5 hash of process executables in logs
+
+Global Flags:
+  -h, --help               Help for {{.CommandPath}}
+`)
 
 	h := fnv.New32a()
 	h.Write([]byte(fmt.Sprintf("%s-%d", time.Now().Format(time.RFC3339Nano), os.Getpid())))
