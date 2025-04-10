@@ -203,6 +203,14 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.SrcPorts, "sport", nil, "Filter by source port")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.DstPorts, "dport", nil, "Filter by destination port")
 
+	// DNS filtering options
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.Domains, "domain", nil, "Filter by domain name (supports wildcards like '*.example.com')")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.DNSTypes, "dns-type", nil, "Filter by DNS record type (A, AAAA, CNAME, etc.)")
+
+	// TLS filtering options
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.TLSVersions, "tls-version", nil, "Filter by TLS version (1.0, 1.1, 1.2, 1.3)")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.SNIHosts, "sni", nil, "Filter by SNI host (supports wildcards)")
+
 	// Output options
 	rootCmd.PersistentFlags().StringVar(&config.logLevel, "log-level", "info", "Log level (error, warning, info, debug, trace)")
 	rootCmd.PersistentFlags().BoolVar(&config.showTimestamp, "log-timestamp", false, "Show timestamps in console logs")
@@ -226,6 +234,14 @@ Network Filters:
   --dst-ip strings         Filter by destination IP address
   --sport strings          Filter by source port
   --dport strings          Filter by destination port
+
+DNS Filters:
+  --domain strings         Filter by domain name (supports wildcards like '*.example.com')
+  --dns-type strings       Filter by DNS record type (A, AAAA, CNAME, etc.)
+
+TLS Filters:
+  --tls-version strings    Filter by TLS version (1.0, 1.1, 1.2, 1.3)
+  --sni strings            Filter by SNI host (supports wildcards)
 
 Output Options:
   --log-level string       Log level (error, warning, info, debug, trace) (default "info")
