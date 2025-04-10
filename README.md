@@ -221,7 +221,6 @@ timestamp|session_uid|process_uid|network_uid|dns_conversation_uid|pid|comm|ppid
 #### TLS Events (tls.log)
 ```
 # TLS handshake details including cipher suites, supported groups, and JA4 fingerprint
-$ cat logs/tls.log 
 timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash
 2025-04-10T06:39:13.197774743Z|1c024195|e7d6b5f2|e946b2d51ab3dca7|2963837|curl|2887886|bash|172.31.44.65|47658|184.25.113.173|443|TLS 1.0|www.example.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xcca9,0xcca8,0xc0ad,0xc02b|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dexamplez508ahttp2c1302|44a0ad3ebc7a695beca07f7fb96692c0
 2025-04-10T06:39:26.123887892Z|1c024195|c7c48a1c|8a901c9dff2fe5fe|2963841|python3|2887886|bash|172.31.44.65|33720|184.25.113.137|443|TLS 1.0|www.example.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xc02b,0xc02f,0xcca9,0xcca8|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dexamplez508a_c1302|c3173f8a5b2706e8895d0e8115635851
