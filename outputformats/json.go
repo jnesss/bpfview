@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jnesss/bpfview/types"
