@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 type LogLevel int
@@ -92,18 +94,19 @@ func (l *Logger) log(level LogLevel, component string, format string, args ...in
 }
 
 // Event logging methods that use the formatter
-func (l *Logger) LogProcess(event *ProcessEvent, info *ProcessInfo) error {
+func (l *Logger) LogProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
 	return l.formatter.FormatProcess(event, info)
 }
 
-func (l *Logger) LogNetwork(event *NetworkEvent, info *ProcessInfo) error {
+func (l *Logger) LogNetwork(event *types.NetworkEvent, info *types.ProcessInfo) error {
 	return l.formatter.FormatNetwork(event, info)
 }
 
-func (l *Logger) LogDNS(event *UserSpaceDNSEvent, info *ProcessInfo) error {
+func (l *Logger) LogDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo) error {
 	return l.formatter.FormatDNS(event, info)
 }
 
-func (l *Logger) LogTLS(event *UserSpaceTLSEvent, info *ProcessInfo) error {
+func (l *Logger) LogTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error {
 	return l.formatter.FormatTLS(event, info)
 }
+

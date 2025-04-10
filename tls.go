@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 func formatTlsVersion(input uint16) string {
@@ -24,7 +26,7 @@ func formatTlsVersion(input uint16) string {
 	return tlsVersion
 }
 
-func handleTLSEvent(event *BPFTLSEvent) {
+func handleTLSEvent(event *types.BPFTLSEvent) {
 	// Clean up process names
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
@@ -37,7 +39,7 @@ func handleTLSEvent(event *BPFTLSEvent) {
 	uid := generateConnID(event.Pid, event.Ppid, srcIP, dstIP, event.SPort, event.DPort)
 
 	// Construct userspace event
-	userEvent := UserSpaceTLSEvent{
+	userEvent := types.UserSpaceTLSEvent{
 		Pid:             event.Pid,
 		Ppid:            event.Ppid,
 		Timestamp:       event.Timestamp,
@@ -145,7 +147,7 @@ func handleTLSEvent(event *BPFTLSEvent) {
 		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
 			globalLogger.LogTLS(&userEvent, processinfo)
 		} else {
-			globalLogger.LogTLS(&userEvent, &ProcessInfo{})
+			globalLogger.LogTLS(&userEvent, &types.ProcessInfo{})
 		}
 	}
 }

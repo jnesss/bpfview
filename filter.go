@@ -5,6 +5,8 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 type FilterConfig struct {
@@ -205,13 +207,13 @@ func NewFilterEngine(config FilterConfig) *FilterEngine {
 
 func (e *FilterEngine) ShouldLog(event interface{}) bool {
 	switch evt := event.(type) {
-	case *ProcessInfo:
+	case *types.ProcessInfo:
 		return e.matchProcess(evt)
-	case *NetworkEvent:
+	case *types.NetworkEvent:
 		return e.matchNetwork(evt)
-	case *UserSpaceDNSEvent:
+	case *types.UserSpaceDNSEvent:
 		return e.matchDNS(evt)
-	case *UserSpaceTLSEvent:
+	case *types.UserSpaceTLSEvent:
 		return e.matchTLS(evt)
 	default:
 		// Unknown event type, log by default
@@ -244,7 +246,7 @@ func parseUint16Slice(strings []string) ([]uint16, error) {
 }
 
 // Matching options: PID, PPID, Comm, CmdLine, BinaryHash
-func (e *FilterEngine) matchProcess(info *ProcessInfo) bool {
+func (e *FilterEngine) matchProcess(info *types.ProcessInfo) bool {
 	// If no filters at all, fast path
 	if !e.hasProcessFilters {
 		return true
@@ -409,7 +411,7 @@ func (e *FilterEngine) matchProcess(info *ProcessInfo) bool {
 	return true
 }
 
-func (e *FilterEngine) matchNetwork(evt *NetworkEvent) bool {
+func (e *FilterEngine) matchNetwork(evt *types.NetworkEvent) bool {
 	// If no filters at all, fast path
 	if !e.hasProcessFilters && !e.hasNetworkFilters {
 		return true
@@ -501,7 +503,7 @@ func (e *FilterEngine) matchNetwork(evt *NetworkEvent) bool {
 	return true
 }
 
-func (e *FilterEngine) matchDNS(evt *UserSpaceDNSEvent) bool {
+func (e *FilterEngine) matchDNS(evt *types.UserSpaceDNSEvent) bool {
 	// If no filters at all, fast path
 	if !e.hasProcessFilters && !e.hasDNSFilters {
 		return true
@@ -576,7 +578,7 @@ func (e *FilterEngine) matchDNS(evt *UserSpaceDNSEvent) bool {
 	return true
 }
 
-func (e *FilterEngine) matchTLS(evt *UserSpaceTLSEvent) bool {
+func (e *FilterEngine) matchTLS(evt *types.UserSpaceTLSEvent) bool {
 	// If no filters at all, fast path
 	if !e.hasProcessFilters && !e.hasTLSFilters {
 		return true

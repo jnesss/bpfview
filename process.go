@@ -14,29 +14,13 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-type ProcessInfo struct {
-	PID         uint32
-	PPID        uint32
-	Comm        string
-	ExePath     string
-	CmdLine     string
-	WorkingDir  string
-	Environment []string
-	UID         uint32
-	GID         uint32
-	Username    string
-	ContainerID string
-	StartTime   time.Time
-	ExitTime    time.Time
-	ExitCode    uint32
-	BinaryHash  string
-}
+	"github.com/jnesss/bpfview/types"
+)
 
 // Process cache to maintain state between EXEC and EXIT events
 var (
-	processCache     = make(map[uint32]*ProcessInfo)
+	processCache     = make(map[uint32]*types.ProcessInfo)
 	processCacheLock sync.RWMutex
 )
 
@@ -106,15 +90,15 @@ var ignoreExitProcesses = map[string]bool{
 	"kstrp":           true, // Stream parser
 }
 
-func handleProcessEvent(event *ProcessEvent, bpfObjs *execveObjects) {
-	if event.EventType == EVENT_PROCESS_EXEC {
+func handleProcessEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
+	if event.EventType == types.EVENT_PROCESS_EXEC {
 		handleProcessExecEvent(event, bpfObjs)
-	} else if event.EventType == EVENT_PROCESS_EXIT {
+	} else if event.EventType == types.EVENT_PROCESS_EXIT {
 		handleProcessExitEvent(event)
 	}
 }
 
-func handleProcessExitEvent(event *ProcessEvent) {
+func handleProcessExitEvent(event *types.ProcessEvent) {
 	// Check if we should ignore this exit
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	if shouldIgnoreProcessExit(comm) {
@@ -136,7 +120,7 @@ func handleProcessExitEvent(event *ProcessEvent) {
 		event.Uid,
 		event.Gid)
 
-	info := &ProcessInfo{
+	info := &types.ProcessInfo{
 		PID:      event.Pid,
 		Comm:     comm,
 		UID:      event.Uid,
@@ -193,7 +177,7 @@ func handleProcessExitEvent(event *ProcessEvent) {
 	processCacheLock.Unlock()
 }
 
-func handleProcessExecEvent(event *ProcessEvent, bpfObjs *execveObjects) {
+func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	// Debug log for event details
 	globalLogger.Debug("process", "Processing EXEC event for PID %d\n", event.Pid)
 
@@ -265,7 +249,7 @@ func loadExecveProgram() execveObjects {
 }
 
 // AddOrUpdateProcessCache adds or updates a process in the cache
-func AddOrUpdateProcessCache(pid uint32, info *ProcessInfo) {
+func AddOrUpdateProcessCache(pid uint32, info *types.ProcessInfo) {
 	processCacheLock.Lock()
 	defer processCacheLock.Unlock()
 
@@ -273,7 +257,7 @@ func AddOrUpdateProcessCache(pid uint32, info *ProcessInfo) {
 }
 
 // GetProcessFromCache retrieves process info from the cache
-func GetProcessFromCache(pid uint32) (*ProcessInfo, bool) {
+func GetProcessFromCache(pid uint32) (*types.ProcessInfo, bool) {
 	processCacheLock.RLock()
 	defer processCacheLock.RUnlock()
 
@@ -327,8 +311,8 @@ func GetUsernameFromUID(uid uint32) string {
 }
 
 // CollectProcMetadata gathers information about a process from /proc
-func CollectProcMetadata(pid uint32) *ProcessInfo {
-	info := &ProcessInfo{
+func CollectProcMetadata(pid uint32) *types.ProcessInfo {
+	info := &types.ProcessInfo{
 		PID: pid,
 	}
 
@@ -437,13 +421,13 @@ func getProcessEnvironment(pid uint32) ([]string, error) {
 }
 
 // EnrichProcessEvent adds additional information to a process event from /proc
-func EnrichProcessEvent(event *ProcessEvent, kernelCmdLine string) *ProcessInfo {
+func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.ProcessInfo {
 	pid := event.Pid
 
 	// Get the basics from the kernel event
 	//  This is the master ProcessInfo we are going to return
 	//  We merge values from kernel mode BPF and two separate usermode /proc lookups
-	info := &ProcessInfo{
+	info := &types.ProcessInfo{
 		PID:      pid,
 		PPID:     event.Ppid,
 		Comm:     string(bytes.TrimRight(event.Comm[:], "\x00")),
@@ -452,12 +436,12 @@ func EnrichProcessEvent(event *ProcessEvent, kernelCmdLine string) *ProcessInfo 
 		ExitCode: event.ExitCode,
 	}
 
-	if event.EventType == EVENT_PROCESS_EXIT {
+	if event.EventType == types.EVENT_PROCESS_EXIT {
 		// For EXIT events, set the exit time using the event timestamp from kernelmode and return immediately
 		info.ExitTime = BpfTimestampToTime(event.Timestamp)
 		return info
 
-	} else if event.EventType == EVENT_PROCESS_EXEC {
+	} else if event.EventType == types.EVENT_PROCESS_EXEC {
 		// For EXEC events, set the start time using the event timestamp from kernelmode
 		info.StartTime = BpfTimestampToTime(event.Timestamp)
 
@@ -615,7 +599,7 @@ func EnrichProcessEvent(event *ProcessEvent, kernelCmdLine string) *ProcessInfo 
 		if globalEngine != nil && globalEngine.config.HashBinaries &&
 			info.ExePath != "" {
 			// Only calculate hash for EXEC events (not EXIT)
-			if event.EventType == EVENT_PROCESS_EXEC {
+			if event.EventType == types.EVENT_PROCESS_EXEC {
 				if hash, err := CalculateMD5(info.ExePath); err == nil {
 					info.BinaryHash = hash
 					globalLogger.Debug("process", "Calculated MD5 hash for %s: %s\n",
