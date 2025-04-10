@@ -68,8 +68,13 @@ Watch a complete HTTP request unfold across all monitoring dimensions:
       172.31.44.65:41054 → 23.221.245.25:443
       Version: TLS 1.2
       SNI: www.apple.com
-      Cipher Suites: 0x1302, 0x1303, 0x1301, 0x1304, 0xc02c
-      Supported Groups: x25519, secp256r1, x448, secp521r1, secp384r1
+      ClientHello len: 508
+      JA4: q0t1dapplez508ahttp2c1302
+      JA4 Hash: aeb3f012e851713acbf3b08b0cee2eba
+      Supported Versions: TLS 1.3, TLS 1.2
+      Cipher Suites: 0x1302, 0x1303, 0x1301, 0x1304, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc0ad, 0xc02b
+      Supported Groups: x25519, secp256r1, x448, secp521r1, secp384r1, ffdhe2048, ffdhe3072, ffdhe4096, ffdhe6144, ffdhe8192
+      Key Share Groups: x25519
 
 # Process exit with duration
 [PROCESS] EXIT: pid=2904710 comm=curl ppid=2877411 parent=bash uid=1000 gid=1000 exit_code=0 duration=42.046208ms
