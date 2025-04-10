@@ -81,6 +81,7 @@ func NewFilterEngine(config FilterConfig) *FilterEngine {
 		len(config.PPIDs) > 0 ||
 		len(config.CommandNames) > 0 ||
 		len(config.CmdlineContains) > 0 ||
+		len(config.ExePaths) > 0 ||
 		len(config.BinaryHashes) > 0 ||
 		config.TrackTree
 
@@ -242,6 +243,7 @@ func parseUint16Slice(strings []string) ([]uint16, error) {
 	return result, nil
 }
 
+// Matching options: PID, PPID, Comm, CmdLine, BinaryHash
 func (e *FilterEngine) matchProcess(info *ProcessInfo) bool {
 	// If no filters at all, fast path
 	if !e.hasProcessFilters {
@@ -309,6 +311,25 @@ func (e *FilterEngine) matchProcess(info *ProcessInfo) bool {
 		}
 	}
 
+	// Executable path matching
+	if len(e.config.ExePaths) > 0 {
+		exePathMatch := false
+		for _, exePath := range e.config.ExePaths {
+			// Check for both exact matches and path prefix matches for flexibility
+			if strings.EqualFold(info.ExePath, exePath) || strings.HasPrefix(info.ExePath, exePath) {
+				exePathMatch = true
+				// If we're tracking trees, add this as a root
+				if e.config.TrackTree {
+					e.processTree.AddRoot(info.PID)
+				}
+				break
+			}
+		}
+		if !exePathMatch {
+			return false
+		}
+	}
+
 	// Command line substring matching
 	if len(e.config.CmdlineContains) > 0 {
 		cmdlineMatch := false
@@ -346,6 +367,41 @@ func (e *FilterEngine) matchProcess(info *ProcessInfo) bool {
 			}
 		} else {
 			// No hash available, can't match
+			return false
+		}
+	}
+
+	// Username matching
+	if len(e.config.UserNames) > 0 {
+		userMatch := false
+		for _, username := range e.config.UserNames {
+			if strings.EqualFold(info.Username, username) {
+				userMatch = true
+				// If we're tracking trees, add this as a root
+				if e.config.TrackTree {
+					e.processTree.AddRoot(info.PID)
+				}
+				break
+			}
+		}
+		if !userMatch {
+			return false
+		}
+	}
+
+	// Container ID matching
+	if len(e.config.ContainerIDs) > 0 {
+		containerMatch := false
+		for _, containerID := range e.config.ContainerIDs {
+			if containerID == "*" || strings.EqualFold(info.ContainerID, containerID) {
+				containerMatch = true
+				if e.config.TrackTree {
+					e.processTree.AddRoot(info.PID)
+				}
+				break
+			}
+		}
+		if !containerMatch {
 			return false
 		}
 	}

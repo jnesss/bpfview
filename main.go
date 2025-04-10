@@ -192,8 +192,12 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.CommandNames, "comm", nil, "Filter by command names")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.PIDs, "pid", nil, "Filter by process IDs")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.PPIDs, "ppid", nil, "Filter by parent process IDs")
-	rootCmd.PersistentFlags().BoolVar(&config.filterConfig.TrackTree, "tree", false, "Track process tree")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.BinaryHashes, "binary-hash", nil, "Filter by MD5 hash of the executable")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.UserNames, "user", nil, "Filter by username")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExePaths, "exe", nil, "Filter by executable path (exact or prefix)")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ContainerIDs, "container-id", nil, "Filter by container ID (use '*' to match any container)")
+
+	rootCmd.PersistentFlags().BoolVar(&config.filterConfig.TrackTree, "tree", false, "Track process tree")
 
 	h := fnv.New32a()
 	h.Write([]byte(fmt.Sprintf("%s-%d", time.Now().Format(time.RFC3339Nano), os.Getpid())))
