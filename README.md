@@ -156,6 +156,9 @@ sudo bpfview --log-timestamp
 
 # Calculate binary hashes of executed binaries
 sudo bpfview --hash-binaries
+# Output format selection
+sudo bpfview --format json  # Use JSON format (default: text)
+
 ```
 
 ## Technical Implementation
@@ -258,6 +261,41 @@ $ grep "www.apple.com" tls.log
 $ grep db79358f24023b06 network.log
 2025-04-09T02:40:41.482210178Z|60d6378b|4f016e0|db79358f24023b06|2904710|curl|2877411|bash|TCP|172.31.44.65|41054|23.221.245.25|443|>|60
 ```
+
+## Output Formats
+
+BPFView supports multiple output formats:
+
+### Text Format (Default)
+Traditional pipe-delimited logs split into process.log, network.log, dns.log, and tls.log files. Optimized for grep and command-line analysis.
+
+### JSON Format
+Single events.json file with structured JSON events. Each line is a complete JSON object containing:
+- Process execution and exit events with full context
+- Network flows with protocol details and byte counts
+- DNS queries and responses with full CNAME chains
+- TLS handshakes with cipher suites and JA4 fingerprints
+
+Example JSON output:
+```json
+{
+  "timestamp": "2025-04-10T22:58:59.336759062Z",
+  "session_uid": "eedf7ea5",
+  "event_type": "tls_handshake",
+  "process": {
+    "pid": 25466,
+    "comm": "curl",
+    "ppid": 23951,
+    "parent_comm": "bash"
+  },
+  "tls": {
+    "version": "TLS 1.2",
+    "sni": "www.example.com",
+    "cipher_suites": ["0x1302", "0x1303", "0x1301"],
+    "ja4": "q0t1dexamplez508ahttp2c1302"
+  }
+}
+````
 
 ## Design Principles
 
