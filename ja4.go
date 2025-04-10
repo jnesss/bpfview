@@ -4,7 +4,6 @@ package main
 import (
 	"crypto/md5"
 	"fmt"
-	"sort"
 	"strings"
 )
 
