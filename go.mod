@@ -4,9 +4,12 @@ go 1.24.1
 
 replace github.com/jnesss/bpfview/types => ./types
 
+replace github.com/jnesss/bpfview/outputformats => ./outputformats
+
 require (
 	github.com/cilium/ebpf v0.18.0
-	github.com/jnesss/bpfview/types v0.0.0-00010101000000-000000000000
+	github.com/jnesss/bpfview/outputformats v0.0.0-00010101000000-000000000000
+	github.com/jnesss/bpfview/types v0.0.0-20250410184514-307cf1204dd8
 	github.com/spf13/cobra v1.9.1
 )
 
