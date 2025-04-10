@@ -117,13 +117,14 @@ type UserSpaceDNSEvent struct {
 
 // TLS event structures
 type BPFTLSEvent struct {
-	EventType  uint32
-	Pid        uint32
-	Ppid       uint32
-	Timestamp  uint64
-	Comm       [16]byte
-	ParentComm [16]byte
-	Version    uint32
+	EventType       uint32
+	Pid             uint32
+	Ppid            uint32
+	Timestamp       uint64
+	Comm            [16]byte
+	ParentComm      [16]byte
+	Version         uint32
+	HandshakeLength uint32
 	// IP address components
 	SAddrA uint8
 	SAddrB uint8
@@ -156,14 +157,19 @@ type UserSpaceTLSEvent struct {
 	DestPort   uint16
 
 	// TLS fields
-	TLSVersion    uint16
-	HandshakeType uint8
-	SNI           string
+	TLSVersion      uint16
+	HandshakeType   uint8
+	HandshakeLength uint32
+	SNI             string
 
 	SupportedVersions []uint16
 	CipherSuites      []uint16
 	SupportedGroups   []uint16
 	KeyShareGroups    []uint16
+
+	ALPNValues []string
+	JA4        string
+	JA4Hash    string
 }
 
 // EventHeader is used for event type routing
