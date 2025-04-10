@@ -9,14 +9,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,6 +33,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/spf13/cobra"
 
+	"github.com/jnesss/bpfview/outputformats"
 	"github.com/jnesss/bpfview/types"
 )
 
@@ -60,6 +64,9 @@ func main() {
 		showTimestamp bool
 		filterConfig  FilterConfig
 		HashBinaries  bool
+		format        string
+		addHostname   bool
+		addIP         bool
 	}
 
 	rootCmd := &cobra.Command{
@@ -73,6 +80,7 @@ func main() {
 
 			// Set boot time
 			BootTime = calculateBootTime()
+			outputformats.SetBootTime(BootTime)
 
 			// Convert string log level to enum
 			consoleLevel := LogLevelInfo // default
@@ -89,8 +97,79 @@ func main() {
 				consoleLevel = LogLevelTrace
 			}
 
-			// Initialize logger
-			logger, err := NewLogger("./logs", consoleLevel, LogLevelInfo, config.showTimestamp)
+			// Get hostname/IP if enabled
+			var hostname, hostIP string
+			if config.addHostname {
+				hostname, _ = os.Hostname()
+			}
+			if config.addIP {
+				hostIP = getDefaultIP()
+			}
+
+			// Create log directory if it doesn't exist
+			logDir := "./logs"
+			if err := os.MkdirAll(logDir, 0755); err != nil {
+				return fmt.Errorf("failed to create log directory: %v", err)
+			}
+
+			// Create formatter based on config
+			var formatter outputformats.EventFormatter
+			switch config.format {
+			case "json":
+				// Rotate existing JSON file if it exists
+				jsonPath := filepath.Join(logDir, "events.json")
+				if _, err := os.Stat(jsonPath); err == nil {
+					// File exists, get timestamp and session_uid from first event
+					file, err := os.Open(jsonPath)
+					if err == nil {
+						var event struct {
+							Timestamp  string `json:"timestamp"`
+							SessionUID string `json:"session_uid"`
+						}
+						if err := json.NewDecoder(file).Decode(&event); err == nil {
+							if t, err := time.Parse(time.RFC3339Nano, event.Timestamp); err == nil {
+								timestamp := t.Format("2006-01-02-15-04-05")
+								sessionUID := event.SessionUID
+								if sessionUID == "" {
+									sessionUID = "unknown"
+								}
+								// Create archived name including session_uid
+								archivedPath := filepath.Join(logDir,
+									fmt.Sprintf("events.%s.%s.json", timestamp, sessionUID))
+								file.Close()
+								if err := os.Rename(jsonPath, archivedPath); err != nil {
+									return fmt.Errorf("failed to rotate events.json: %v", err)
+								}
+							}
+						}
+						file.Close()
+					}
+				}
+
+				outputFile, err := os.OpenFile(filepath.Join(logDir, "events.json"),
+					os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+				if err != nil {
+					return fmt.Errorf("failed to open output file: %v", err)
+				}
+				formatter = outputformats.NewJSONFormatter(outputFile, hostname, hostIP, globalSessionUid)
+			case "text", "":
+				textFormatter, err := outputformats.NewTextFormatter(logDir, hostname, hostIP, globalSessionUid)
+				if err != nil {
+					return fmt.Errorf("failed to create text formatter: %v", err)
+				}
+				formatter = textFormatter
+			default:
+				return fmt.Errorf("unknown format: %s", config.format)
+			}
+
+			// Initialize formatter
+			if err := formatter.Initialize(); err != nil {
+				return fmt.Errorf("failed to initialize formatter: %v", err)
+			}
+			defer formatter.Close()
+
+			// Initialize logger with formatter
+			logger, err := NewLogger(formatter, consoleLevel, config.showTimestamp)
 			if err != nil {
 				return fmt.Errorf("failed to initialize logger: %v", err)
 			}
@@ -216,6 +295,9 @@ func main() {
 	// Output options
 	rootCmd.PersistentFlags().StringVar(&config.logLevel, "log-level", "info", "Log level (error, warning, info, debug, trace)")
 	rootCmd.PersistentFlags().BoolVar(&config.showTimestamp, "log-timestamp", false, "Show timestamps in console logs")
+	rootCmd.PersistentFlags().StringVar(&config.format, "format", "text", "Output log format: text, json")
+	rootCmd.PersistentFlags().BoolVar(&config.addHostname, "add-hostname", false, "Include hostname with every log entry")
+	rootCmd.PersistentFlags().BoolVar(&config.addIP, "add-ip", false, "Include host IP address with every log entry")
 
 	rootCmd.SetUsageTemplate(`Usage:
   {{.CommandPath}} [flags]
@@ -249,6 +331,9 @@ Output Options:
   --log-level string       Log level (error, warning, info, debug, trace) (default "info")
   --log-timestamp          Show timestamps in console logs
   --hash-binaries          Include MD5 hash of process executables in logs
+  --format                 Output log format: text, json
+  --add-hostname           Include hostname with every log entry
+  --add-ip                 Include host IP address with every log entry"
 
 Global Flags:
   -h, --help               Help for {{.CommandPath}}
@@ -609,4 +694,28 @@ func calculateBootTime() time.Time {
 
 func BpfTimestampToTime(bpfTimestamp uint64) time.Time {
 	return BootTime.Add(time.Duration(bpfTimestamp))
+}
+
+func getDefaultIP() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ip4 := ipnet.IP.To4(); ip4 != nil {
+					return ip4.String()
+				}
+			}
+		}
+	}
+	return ""
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jnesss/bpfview/outputformats"
 	"github.com/jnesss/bpfview/types"
 )
 
@@ -20,22 +21,13 @@ const (
 )
 
 type Logger struct {
-	formatter     EventFormatter
+	formatter     outputformats.EventFormatter
 	consoleLevel  LogLevel
 	showTimestamp bool
 	lock          sync.Mutex
 }
 
-func NewLogger(logDir string, consoleLevel, fileLevel LogLevel, showTimestamp bool) (*Logger, error) {
-	formatter, err := NewTextFormatter(logDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create formatter: %v", err)
-	}
-
-	if err := formatter.Initialize(); err != nil {
-		return nil, fmt.Errorf("failed to initialize formatter: %v", err)
-	}
-
+func NewLogger(formatter outputformats.EventFormatter, consoleLevel LogLevel, showTimestamp bool) (*Logger, error) {
 	return &Logger{
 		formatter:     formatter,
 		consoleLevel:  consoleLevel,
@@ -109,4 +101,3 @@ func (l *Logger) LogDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo)
 func (l *Logger) LogTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error {
 	return l.formatter.FormatTLS(event, info)
 }
-

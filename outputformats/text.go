@@ -1,5 +1,5 @@
-// output.go
-package main
+// text.go
+package outputformats
 
 import (
 	"bufio"
@@ -15,17 +15,6 @@ import (
 	"github.com/jnesss/bpfview/types"
 )
 
-// EventFormatter defines the interface for different output formats
-type EventFormatter interface {
-	Initialize() error
-	Close() error
-
-	FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error
-	FormatNetwork(event *types.NetworkEvent, info *types.ProcessInfo) error
-	FormatDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo) error
-	FormatTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error
-}
-
 // TextFormatter implements the original pipe-delimited format
 type TextFormatter struct {
 	processLog *os.File
@@ -34,15 +23,21 @@ type TextFormatter struct {
 	tlsLog     *os.File
 	envLog     *os.File
 	logDir     string
+	sessionUID string
+	hostname   string
+	hostIP     string
 	mu         sync.Mutex
 }
 
-func NewTextFormatter(logDir string) (*TextFormatter, error) {
+func NewTextFormatter(logDir, hostname, hostIP, sessionUID string) (*TextFormatter, error) {
 	if logDir == "" {
 		return nil, fmt.Errorf("log directory cannot be empty")
 	}
 	return &TextFormatter{
-		logDir: logDir,
+		logDir:     logDir,
+		hostname:   hostname,
+		hostIP:     hostIP,
+		sessionUID: sessionUID,
 	}, nil
 }
 
@@ -206,10 +201,10 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 	binaryHash := cleanField(info.BinaryHash, "-")
 
 	_, err := fmt.Fprintf(f.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
-		event_timeStr,    // Event timestamp
-		globalSessionUid, // Session identifier
-		eventUID,         // Enhanced UID
-		eventType,        // EXEC or EXIT
+		event_timeStr, // Event timestamp
+		f.sessionUID,  // Session identifier
+		eventUID,      // Enhanced UID
+		eventType,     // EXEC or EXIT
 		info.PID,
 		info.PPID,
 		info.UID,
@@ -237,22 +232,6 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 	}
 
 	return nil
-}
-
-// Helper functions - we'll need to move these from logging.go or reimplement them
-func cleanField(value string, defaultValue string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return defaultValue
-	}
-	return value
-}
-
-func formatTimeField(t time.Time) string {
-	if !t.IsZero() && t.Year() >= 2000 {
-		return t.Format(time.RFC3339Nano)
-	}
-	return "-"
 }
 
 func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.ProcessInfo) error {
@@ -284,7 +263,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 
 	_, err := fmt.Fprintf(f.networkLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d\n",
 		timestamp.Format(time.RFC3339Nano),
-		globalSessionUid,
+		f.sessionUID,
 		processUID,
 		uid,
 		event.Pid,
@@ -329,7 +308,7 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		for _, q := range event.Questions {
 			_, err := fmt.Fprintf(f.dnsLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|-|-\n",
 				timestamp.Format(time.RFC3339Nano),
-				globalSessionUid,
+				f.sessionUID,
 				processUID,
 				network_uid,
 				event.ConversationID,
@@ -357,7 +336,7 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 			answer := formatDNSAnswer(&a)
 			_, err := fmt.Fprintf(f.dnsLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|%s|%d\n",
 				timestamp.Format(time.RFC3339Nano),
-				globalSessionUid,
+				f.sessionUID,
 				processUID,
 				network_uid,
 				event.ConversationID,
@@ -418,7 +397,7 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 
 	_, err := fmt.Fprintf(f.tlsLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%d|%s|%d|%s|%s|%s|%s|%d|%s|%s\n",
 		timestamp.Format(time.RFC3339Nano),
-		globalSessionUid,
+		f.sessionUID,
 		processUID,
 		network_uid,
 		event.Pid,
