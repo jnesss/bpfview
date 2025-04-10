@@ -95,6 +95,13 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
     if (tls_header[0] != 0x16 || tls_header[5] != 0x01)
         return;
 
+    // Extract handshake message length from handshake header
+    // This is a 3-byte field at offset 6, 7, 8 in the handshake record
+    // payload_offset + 6, 7, 8
+    unsigned char length_bytes[3];
+    if (bpf_skb_load_bytes(skb, payload_offset + 6, length_bytes, 3) < 0)
+        return;
+        
     // TLS version check
     if (tls_header[1] != 0x03 || tls_header[2] < 0x01 || tls_header[2] > 0x04)
         return;
@@ -130,6 +137,9 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
     event->dport = bpf_ntohs(tcp->dest);
     
     event->version = ((__u32)tls_header[1] << 8) | tls_header[2];
+    
+    // Convert 3 bytes to a 24-bit length (big-endian)
+    event->handshake_length = (length_bytes[0] << 16) | (length_bytes[1] << 8) | length_bytes[2];
     
     // Read payload into event data buffer
     event->data_len = 0;

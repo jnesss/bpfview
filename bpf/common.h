@@ -133,6 +133,7 @@ struct tls_event {
     char comm[TASK_COMM_LEN];
     char parent_comm[TASK_COMM_LEN];
     __u32 version;
+    __u32 handshake_length;
     // IP address components
     __u8 saddr_a;
     __u8 saddr_b;
