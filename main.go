@@ -178,7 +178,7 @@ func main() {
 							}
 							// Create archived name including session_uid
 							archivedPath := filepath.Join(logDir,
-								fmt.Sprintf("%s.%s.%s", fileName[:len(fileName)-5],
+								fmt.Sprintf("%s.%s.%s.json", fileName[:len(fileName)-5],
 									timestamp.Format("2006-01-02-15-04-05"),
 									sessionUID))
 
