@@ -33,23 +33,25 @@ type ProcessJSON struct {
 	Host       *HostInfo `json:"host,omitempty"`
 	EventType  string    `json:"event_type"`
 	Process    struct {
-		PID        uint32 `json:"pid"`
-		Comm       string `json:"comm"`
-		PPID       uint32 `json:"ppid"`
-		ParentComm string `json:"parent_comm"`
-		UID        uint32 `json:"uid"`
-		GID        uint32 `json:"gid"`
-		ExePath    string `json:"exe_path"`
-		BinaryHash string `json:"binary_hash,omitempty"`
-		CmdLine    string `json:"cmdline"`
-		Username   string `json:"username"`
-		CWD        string `json:"cwd"`
-		StartTime  string `json:"start_time,omitempty"`
-		ExitTime   string `json:"exit_time,omitempty"`
-		ExitCode   int32  `json:"exit_code,omitempty"`
-		Duration   string `json:"duration,omitempty"`
+		PID             uint32 `json:"pid"`
+		Comm            string `json:"comm"`
+		PPID            uint32 `json:"ppid"`
+		ParentComm      string `json:"parent_comm"`
+		UID             uint32 `json:"uid"`
+		GID             uint32 `json:"gid"`
+		ExePath         string `json:"exe_path"`
+		BinaryHash      string `json:"binary_hash,omitempty"`
+		CmdLine         string `json:"cmdline"`
+		Username        string `json:"username"`
+		CWD             string `json:"cwd"`
+		StartTime       string `json:"start_time,omitempty"`
+		ExitTime        string `json:"exit_time,omitempty"`
+		ExitCode        int32  `json:"exit_code,omitempty"`
+		ExitDescription string `json:"exit_description,omitempty"`
+		Duration        string `json:"duration,omitempty"`
 	} `json:"process"`
 	ContainerID string `json:"container_id,omitempty"`
+	Message     string `json:"message,omitempty"`
 }
 
 type NetworkJSON struct {
@@ -66,14 +68,16 @@ type NetworkJSON struct {
 		ParentComm string `json:"parent_comm"`
 	} `json:"process"`
 	Network struct {
-		Protocol   string `json:"protocol"`
-		SourceIP   string `json:"source_ip"`
-		SourcePort uint16 `json:"source_port"`
-		DestIP     string `json:"dest_ip"`
-		DestPort   uint16 `json:"dest_port"`
-		Direction  string `json:"direction"`
-		Bytes      uint32 `json:"bytes"`
+		Protocol      string `json:"protocol"`
+		SourceIP      string `json:"source_ip"`
+		SourcePort    uint16 `json:"source_port"`
+		DestIP        string `json:"dest_ip"`
+		DestPort      uint16 `json:"dest_port"`
+		Direction     string `json:"direction"`
+		DirectionDesc string `json:"direction_description,omitempty"`
+		Bytes         uint32 `json:"bytes"`
 	} `json:"network"`
+	Message string `json:"message,omitempty"`
 }
 
 type DNSJSON struct {
@@ -103,6 +107,7 @@ type DNSJSON struct {
 		DestIP     string `json:"dest_ip"`
 		DestPort   uint16 `json:"dest_port"`
 	} `json:"network"`
+	Message string `json:"message,omitempty"`
 }
 
 type DNSQuestionJSON struct {
@@ -149,6 +154,7 @@ type TLSJSON struct {
 		DestIP     string `json:"dest_ip"`
 		DestPort   uint16 `json:"dest_port"`
 	} `json:"network"`
+	Message string `json:"message,omitempty"`
 }
 
 func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string) *JSONFormatter {
@@ -208,9 +214,30 @@ func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		jsonEvent.Process.ExitTime = info.ExitTime.Format(time.RFC3339Nano)
 		jsonEvent.Process.ExitCode = int32(info.ExitCode)
 
+		switch info.ExitCode {
+		case 0:
+			jsonEvent.Process.ExitDescription = "Success"
+		case 1:
+			jsonEvent.Process.ExitDescription = "General error"
+		case 126:
+			jsonEvent.Process.ExitDescription = "Command not executable"
+		case 127:
+			jsonEvent.Process.ExitDescription = "Command not found"
+		case 130:
+			jsonEvent.Process.ExitDescription = "Terminated by Ctrl+C"
+		case 255:
+			jsonEvent.Process.ExitDescription = "Exit status out of range or SSH closed"
+		}
+
 		if !info.StartTime.IsZero() {
 			jsonEvent.Process.Duration = info.ExitTime.Sub(info.StartTime).String()
 		}
+	}
+
+	if event.EventType == types.EVENT_PROCESS_EXEC {
+		jsonEvent.Message = fmt.Sprintf("process_exec: %s (PID: %d)", info.Comm, info.PID)
+	} else {
+		jsonEvent.Message = fmt.Sprintf("process_exit: %s (PID: %d)", info.Comm, info.PID)
 	}
 
 	jsonEvent.ContainerID = info.ContainerID
@@ -259,17 +286,22 @@ func (f *JSONFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	jsonEvent.Network.SourcePort = event.SrcPort
 	jsonEvent.Network.DestIP = ipToString(event.DstIP)
 	jsonEvent.Network.DestPort = event.DstPort
-	jsonEvent.Network.Direction = directionToString(event.Direction)
 	jsonEvent.Network.Bytes = event.BytesCount
 
-	return f.encoder.Encode(jsonEvent)
-}
-
-func directionToString(direction uint8) string {
-	if direction == types.FLOW_INGRESS {
-		return "ingress"
+	if event.Direction == types.FLOW_INGRESS {
+		jsonEvent.Network.Direction = "ingress"
+		jsonEvent.Network.DirectionDesc = "Incoming traffic from external host"
+	} else {
+		jsonEvent.Network.Direction = "egress"
+		jsonEvent.Network.DirectionDesc = "Outgoing traffic to external service"
 	}
-	return "egress"
+
+	jsonEvent.Message = fmt.Sprintf("Network connection: %s:%d → %s:%d (%s)",
+		jsonEvent.Network.SourceIP, jsonEvent.Network.SourcePort,
+		jsonEvent.Network.DestIP, jsonEvent.Network.DestPort,
+		strings.ToLower(jsonEvent.Network.Protocol))
+
+	return f.encoder.Encode(jsonEvent)
 }
 
 func (f *JSONFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo) error {
@@ -354,6 +386,18 @@ func (f *JSONFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 
 			jsonEvent.DNS.Answers = append(jsonEvent.DNS.Answers, answer)
 		}
+
+		if len(event.Questions) > 0 {
+			jsonEvent.Message = fmt.Sprintf("DNS response: %s", event.Questions[0].Name)
+		} else {
+			jsonEvent.Message = "DNS response"
+		}
+	} else {
+		if len(event.Questions) > 0 {
+			jsonEvent.Message = fmt.Sprintf("DNS query: %s", event.Questions[0].Name)
+		} else {
+			jsonEvent.Message = "DNS query"
+		}
 	}
 
 	// Network info
@@ -428,6 +472,12 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	if event.JA4 != "" {
 		jsonEvent.TLS.JA4 = event.JA4
 		jsonEvent.TLS.JA4Hash = event.JA4Hash
+	}
+
+	if event.SNI != "" {
+		jsonEvent.Message = fmt.Sprintf("TLS handshake: %s (%s)", event.SNI, formatTlsVersion(event.TLSVersion))
+	} else {
+		jsonEvent.Message = fmt.Sprintf("TLS handshake: %s", formatTlsVersion(event.TLSVersion))
 	}
 
 	// Network info
