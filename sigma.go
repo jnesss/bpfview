@@ -26,6 +26,15 @@ type DetectionEvent struct {
 	PID        uint32 // Keep PID for potential cache lookup
 }
 
+type MatchResult struct {
+	Rule          sigma.Rule
+	Match         bool
+	Timestamp     time.Time
+	ProcessUID    string
+	PID           uint32
+	MatchedFields map[string]interface{}
+}
+
 type SigmaEngine struct {
 	rulesDir   string
 	evaluators map[string]*evaluator.RuleEvaluator
@@ -35,6 +44,9 @@ type SigmaEngine struct {
 	eventChan chan DetectionEvent
 	queueSize int
 	dropCount atomic.Int64 // Track dropped events
+
+	running atomic.Bool      // Track if processing worker is running
+	matches chan MatchResult // Channel for match results
 }
 
 func NewSigmaEngine(rulesDir string, queueSize int) (*SigmaEngine, error) {
@@ -61,6 +73,7 @@ Either:
 		evaluators: make(map[string]*evaluator.RuleEvaluator),
 		watcher:    watcher,
 		eventChan:  make(chan DetectionEvent, queueSize),
+		matches:    make(chan MatchResult, queueSize),
 		queueSize:  queueSize,
 	}
 
@@ -76,7 +89,116 @@ Either:
 		return nil, fmt.Errorf("failed to setup watcher: %v", err)
 	}
 
+	// Start processing worker
+	if err := engine.Start(); err != nil {
+		watcher.Close()
+		return nil, fmt.Errorf("failed to start processing: %v", err)
+	}
+
 	return engine, nil
+}
+
+// Add worker control methods
+func (se *SigmaEngine) Start() error {
+	if se.running.Load() {
+		return fmt.Errorf("sigma engine already running")
+	}
+
+	se.running.Store(true)
+	go se.processEvents()
+
+	log.Printf("Started Sigma rule processing")
+	return nil
+}
+
+// Add event processing loop
+func (se *SigmaEngine) processEvents() {
+	for se.running.Load() {
+		select {
+		case evt := <-se.eventChan:
+			se.handleEvent(evt)
+		default:
+			// No events waiting - sleep briefly
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
+	// Lock evaluators map for reading
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+
+	// Check each rule
+	for _, evaluator := range se.evaluators {
+		result, err := evaluator.Matches(context.Background(), evt.Data)
+		if err != nil {
+			log.Printf("Error evaluating rule %s: %v", evaluator.Rule.ID, err)
+			continue
+		}
+
+		if result.Match {
+
+			// Convert SearchResults from map[string]bool to map[string]interface{}
+			matchedFields := make(map[string]interface{})
+			for k, v := range result.SearchResults {
+				matchedFields[k] = v
+			}
+
+			// Create match result
+			match := MatchResult{
+				Rule:          evaluator.Rule,
+				Match:         true,
+				Timestamp:     evt.Timestamp,
+				ProcessUID:    evt.ProcessUID,
+				PID:           evt.PID,
+				MatchedFields: matchedFields,
+			}
+
+			// Try to enrich with process info if available
+			if info, exists := GetProcessFromCache(evt.PID); exists {
+				log.Printf("Rule match: %s (Process: %s [%d], Command: %s)",
+					evaluator.Rule.Title,
+					info.Comm,
+					evt.PID,
+					info.CmdLine)
+			} else {
+				log.Printf("Rule match: %s (ProcessUID: %s, PID: %d)",
+					evaluator.Rule.Title,
+					evt.ProcessUID,
+					evt.PID)
+			}
+
+			// Send match result non-blocking
+			select {
+			case se.matches <- match:
+				// Match sent successfully
+			default:
+				// Match channel full
+				se.dropCount.Add(1)
+				log.Printf("WARNING: Dropped match for rule %s due to full queue",
+					evaluator.Rule.Title)
+			}
+		}
+	}
+}
+
+func (se *SigmaEngine) Close() error {
+	se.Stop()
+
+	// Close channels
+	close(se.eventChan)
+	close(se.matches)
+
+	// Close watcher
+	if se.watcher != nil {
+		return se.watcher.Close()
+	}
+	return nil
+}
+
+func (se *SigmaEngine) Stop() {
+	se.running.Store(false)
 }
 
 func (se *SigmaEngine) SubmitEvent(evt DetectionEvent) {
@@ -274,11 +396,4 @@ func (se *SigmaEngine) watchRules() {
 			log.Printf("Error watching rules directory: %v", err)
 		}
 	}
-}
-
-func (se *SigmaEngine) Close() error {
-	if se.watcher != nil {
-		return se.watcher.Close()
-	}
-	return nil
 }
