@@ -159,7 +159,8 @@ sudo bpfview --hash-binaries
 
 # Output format selection
 sudo bpfview --format json  # Use JSON format (default: text)
-
+sudo bpfview --format json-ecs  # Use Elastic Common Schema format
+sudo bpfview --format gelf  # Use Graylog Extended Log Format
 ```
 
 ## Technical Implementation
@@ -277,6 +278,14 @@ Single events.json file with structured JSON events. Each line is a complete JSO
 - DNS queries and responses with full CNAME chains
 - TLS handshakes with cipher suites and JA4 fingerprints
 
+```bash
+# Generate standard JSON logs
+sudo bpfview --format json
+
+# View with jq for pretty formatting
+cat logs/events.json | jq '.'
+```
+
 Example JSON output:
 ```json
 {
@@ -296,7 +305,95 @@ Example JSON output:
     "ja4": "q0t1dexamplez508ahttp2c1302"
   }
 }
-````
+```
+
+### Elastic Common Schema (ECS) Format
+Structured JSON format compatible with Elastic Stack (Elasticsearch, Kibana, etc.). Each event follows the standardized [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/ecs-reference.html) for easy integration with existing ELK deployments.
+
+```bash
+# Generate ECS-compatible logs
+sudo bpfview --format json-ecs
+
+# View with jq for pretty formatting
+cat logs/events.ecs.json | jq '.'
+```
+
+Example ECS output:
+```json
+{
+  "@timestamp": "2025-04-12T14:56:41.255634599Z",
+  "ecs.version": "8.12.0",
+  "event.type": "network_flow",
+  "event.category": "network",
+  "event.kind": "event",
+  "event.dataset": "bpfview",
+  "message": "Network connection: 172.31.44.65:34746 → 169.254.169.123:123 (udp)",
+  "process.name": "chronyd",
+  "process.pid": 1617,
+  "network.direction": "egress",
+  "network.direction_description": "Outgoing traffic to external service",
+  "labels": {
+    "network_uid": "453266291be11c6a",
+    "process_uid": "e8f15ec9",
+    "session_uid": "309bf679"
+  }
+}
+```
+
+### GELF Format (Graylog)
+[Graylog Extended Log Format](https://docs.graylog.org/docs/gelf) for direct integration with Graylog log management. Includes structured fields with underscore prefixes for custom fields.
+
+```bash
+# Generate GELF-compatible logs
+sudo bpfview --format gelf
+
+# View with jq for pretty formatting
+cat logs/events.gelf.json | jq '.'
+```
+
+Example GELF output:
+```json
+{
+  "version": "1.1",
+  "host": "ip-172-31-44-65.us-east-2.compute.internal",
+  "short_message": "process_exec: curl (PID: 65488)",
+  "timestamp": 1744380035.9866939,
+  "level": 6,
+  "full_message": "process_exec: curl (PID: 65488)\n\nProcess Details:\nExecutable: /usr/bin/curl\nCommand: curl https://www.example.com\nWorking Directory: /home/ec2-user/bpfview/logs\nUser: ec2-user (UID: 1000)\nGroup ID: 1000\n",
+  "_event_type": "process_exec",
+  "_event_category": "process",
+  "_process_id": 65488,
+  "_process_name": "curl",
+  "_parent_id": 23951,
+  "_parent_name": "bash",
+  "_exe_path": "/usr/bin/curl",
+  "_cmdline": "curl https://www.example.com",
+  "_session_uid": "920c9cf7",
+  "_process_uid": "7e8d2929"
+}
+```
+
+### Viewing JSON Logs
+
+For all JSON formats, the `jq` utility is recommended for viewing and filtering:
+
+```bash
+# Install jq if needed
+sudo apt install jq   # Ubuntu/Debian
+sudo yum install jq   # Amazon Linux/RHEL/CentOS
+
+# Filter for specific events
+cat logs/events.json | jq 'select(.event_type == "process_exec")'
+cat logs/events.ecs.json | jq 'select(."event.type" == "tls")'
+cat logs/events.gelf.json | jq 'select(._event_type == "dns_query")'
+
+# Filter by process
+cat logs/events.json | jq 'select(.process.name == "curl")'
+cat logs/events.ecs.json | jq 'select(."process.name" == "nginx")'
+
+# Extract session correlation data
+cat logs/events.gelf.json | jq 'select(._conversation_id != null) | {timestamp, process: ._process_name, dns: ._dns_questions, conversation: ._conversation_id}'
+```
 
 ## Design Principles
 
