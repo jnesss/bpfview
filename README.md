@@ -273,8 +273,8 @@ Traditional pipe-delimited logs split into process.log, network.log, dns.log, an
 
 ### JSON Format
 Single events.json file with structured JSON events. Each line is a complete JSON object containing:
-- Process execution and exit events with full context
-- Network flows with protocol details and byte counts
+- Process execution and exit events with full context and human-readable messages
+- Network flows with protocol details, byte counts, and direction descriptions
 - DNS queries and responses with full CNAME chains
 - TLS handshakes with cipher suites and JA4 fingerprints
 
@@ -292,6 +292,7 @@ Example JSON output:
   "timestamp": "2025-04-10T22:58:59.336759062Z",
   "session_uid": "eedf7ea5",
   "event_type": "tls_handshake",
+  "message": "TLS handshake: www.example.com (TLS 1.2)",
   "process": {
     "pid": 25466,
     "comm": "curl",
@@ -305,6 +306,7 @@ Example JSON output:
     "ja4": "q0t1dexamplez508ahttp2c1302"
   }
 }
+
 ```
 
 ### Elastic Common Schema (ECS) Format
