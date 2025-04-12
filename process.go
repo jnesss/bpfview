@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"hash/fnv"
 	"io/ioutil"
 	"log"
 	"os"
@@ -236,6 +237,47 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {
 		globalLogger.LogProcess(event, enrichedInfo)
+	}
+
+	// If Sigma detection is enabled, submit event
+	if globalSigmaEngine != nil {
+		// Map fields to Sigma format
+		sigmaEvent := map[string]interface{}{
+			"Image":            enrichedInfo.ExePath,
+			"CommandLine":      enrichedInfo.CmdLine,
+			"ProcessId":        enrichedInfo.PID,
+			"ParentProcessId":  enrichedInfo.PPID,
+			"User":             enrichedInfo.Username,
+			"CurrentDirectory": enrichedInfo.WorkingDir,
+		}
+
+		// Add parent info if available
+		if parentInfo, exists := GetProcessFromCache(enrichedInfo.PPID); exists {
+			sigmaEvent["ParentImage"] = parentInfo.ExePath
+			sigmaEvent["ParentCommandLine"] = parentInfo.CmdLine
+		}
+
+		// Generate process UID for correlation
+		//  Ugh, we're doing this twice now.  FIX!
+		h := fnv.New32a()
+		processStartTime := BpfTimestampToTime(event.Timestamp)
+		h.Write([]byte(fmt.Sprintf("%s-%d", processStartTime.Format(time.RFC3339Nano), enrichedInfo.PID)))
+		if enrichedInfo.ExePath != "" {
+			h.Write([]byte(enrichedInfo.ExePath))
+		}
+		processUID := fmt.Sprintf("%x", h.Sum32())
+
+		// Create detection event
+		detectionEvent := DetectionEvent{
+			EventType:  "process_creation",
+			Data:       sigmaEvent,
+			Timestamp:  BpfTimestampToTime(event.Timestamp),
+			ProcessUID: processUID,
+			PID:        enrichedInfo.PID,
+		}
+
+		// Submit non-blocking
+		globalSigmaEngine.SubmitEvent(detectionEvent)
 	}
 }
 

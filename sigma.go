@@ -10,20 +10,46 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/bradleyjkemp/sigma-go"
 	"github.com/bradleyjkemp/sigma-go/evaluator"
 	"github.com/fsnotify/fsnotify"
 )
 
+type DetectionEvent struct {
+	EventType  string
+	Data       map[string]interface{}
+	Timestamp  time.Time
+	ProcessUID string // Just store process identifier
+	PID        uint32 // Keep PID for potential cache lookup
+}
+
 type SigmaEngine struct {
 	rulesDir   string
 	evaluators map[string]*evaluator.RuleEvaluator
 	watcher    *fsnotify.Watcher
-	mu         sync.RWMutex // Protects evaluators map
+	mu         sync.RWMutex
+
+	eventChan chan DetectionEvent
+	queueSize int
+	dropCount atomic.Int64 // Track dropped events
 }
 
-func NewSigmaEngine(rulesDir string) (*SigmaEngine, error) {
+func NewSigmaEngine(rulesDir string, queueSize int) (*SigmaEngine, error) {
+	if queueSize <= 0 {
+		queueSize = 10000 // Default size if not specified
+	}
+
+	// Verify rules directory exists
+	if _, err := os.Stat(rulesDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf(`sigma rules directory "%s" does not exist. 
+Either:
+1. Create a 'rules' subdirectory in your current directory and add .yml rules files
+2. Use --sigma-rules to specify your rules directory location`, rulesDir)
+	}
+
 	// Create watcher
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -34,12 +60,8 @@ func NewSigmaEngine(rulesDir string) (*SigmaEngine, error) {
 		rulesDir:   rulesDir,
 		evaluators: make(map[string]*evaluator.RuleEvaluator),
 		watcher:    watcher,
-	}
-
-	// Create rules directory if it doesn't exist
-	if err := os.MkdirAll(rulesDir, 0755); err != nil {
-		watcher.Close()
-		return nil, fmt.Errorf("failed to create rules directory: %v", err)
+		eventChan:  make(chan DetectionEvent, queueSize),
+		queueSize:  queueSize,
 	}
 
 	// Initial rule loading
@@ -55,6 +77,28 @@ func NewSigmaEngine(rulesDir string) (*SigmaEngine, error) {
 	}
 
 	return engine, nil
+}
+
+func (se *SigmaEngine) SubmitEvent(evt DetectionEvent) {
+	select {
+	case se.eventChan <- evt:
+		// Event accepted
+	default:
+		// Channel full - increment drop counter
+		se.dropCount.Add(1)
+		if se.dropCount.Load()%1000 == 0 { // Log every 1000th drop
+			log.Printf("WARNING: Dropped %d Sigma detection events due to full queue",
+				se.dropCount.Load())
+		}
+	}
+}
+
+func (se *SigmaEngine) GetMetrics() map[string]int64 {
+	return map[string]int64{
+		"dropped_events": se.dropCount.Load(),
+		"queue_size":     int64(se.queueSize),
+		"rules_loaded":   int64(len(se.evaluators)),
+	}
 }
 
 func (se *SigmaEngine) loadAllRules() error {
