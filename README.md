@@ -25,6 +25,9 @@ sudo bpfview --comm nginx,php-fpm
 
 # Track all container activity
 sudo bpfview --container-id "*"
+
+# Enable Sigma rule detection
+sudo bpfview --sigma-rules ./rules
 ```
 
 ## Key Features
@@ -35,6 +38,9 @@ sudo bpfview --container-id "*"
 - **Environment Capture**: Full process environment variable tracking
 - **DNS & TLS Inspection**: Domain name resolution and TLS handshake monitoring with SNI extraction
 - **Performance Optimized**: Efficient eBPF programs with ring buffer communication
+- **Real-time Sigma Detection**: Process behavior matching against Sigma rules with immediate alerts
+- **Automatic Rule Reloading**: Dynamic rule updates without service restart
+- **Rich Detection Context**: Full process and system context for each rule match
 - **JA4 Fingerprinting**: Generate standardized JA4 fingerprints for TLS Client Hellos for threat actor identification and correlation
 
 ## Technical Capabilities Demonstration
@@ -144,6 +150,15 @@ sudo bpfview --tls-version "1.2,1.3"
 
 # Filter by SNI host (supports wildcards)
 sudo bpfview --sni "api.example.com"
+```
+
+### Detection Options
+```bash
+# Enable Sigma detection with rules directory
+sudo bpfview --sigma-rules /path/to/rules
+
+# Configure detection queue size
+sudo bpfview --sigma-rules ./rules --sigma-queue-size 20000
 ```
 
 ### Output Options
@@ -501,6 +516,7 @@ BPFView is built with several core design principles in mind:
 | TLS/SNI Visibility | ✅ | ❌ | ✅ | ❌ |
 | JA4 Fingerprinting | ✅ | ❌ | ✅ | ❌ |
 | Process Tree Tracking | ✅ | ❌ | ❌ | ❌ |
+| Sigma Rule Detection | ✅ | ❌ | ❌ | ❌ |
 | Performance Impact | Low | Low | High | Medium |
 
 ## Installation and Platform Support
