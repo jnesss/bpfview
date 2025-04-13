@@ -254,6 +254,13 @@ timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|s
 2025-04-10T06:39:26.123887892Z|1c024195|c7c48a1c|8a901c9dff2fe5fe|2963841|python3|2887886|bash|172.31.44.65|33720|184.25.113.137|443|TLS 1.0|www.example.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xc02b,0xc02f,0xcca9,0xcca8|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dexamplez508a_c1302|c3173f8a5b2706e8895d0e8115635851
 ```
 
+#### Sigma Events (sigma.log)
+```
+# Behavior matching against Sigma rules with immediate alerts
+timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags
+2025-04-13T15:10:22.187053433Z|e2072cab-8c9a-459b-b63c-40ae79e27031|Decode Base64 Encoded Text|low|90c391c0|187348|base64|base64 -d|/home/ec2-user|Detects usage of base64 utility to decode arbitrary base64-encoded text|'Image' endswith '/base64' WITH 'CommandLine' contains '-d'|https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1027/T1027.md|attack.defense-evasion, attack.t1027
+```
+
 ### Analysis Examples
 
 #### Trace DNS Resolution Chain
