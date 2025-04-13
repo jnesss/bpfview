@@ -31,14 +31,27 @@ type gelfMessage struct {
 	ShortMessage string  `json:"short_message"` // Brief message
 	Timestamp    float64 `json:"timestamp"`     // Unix timestamp
 	Level        int     `json:"level"`         // Syslog level (info=6)
+	FullMessage  string  `json:"full_message,omitempty"`
 
-	// Optional standard fields
-	FullMessage string `json:"full_message,omitempty"`
+	// Add Sigma detection fields (all custom fields must be prefixed with _)
+	RuleID          string   `json:"_rule_id"`
+	RuleName        string   `json:"_rule_name"`
+	RuleLevel       string   `json:"_rule_level"`
+	RuleDescription string   `json:"_rule_description"`
+	MatchDetails    string   `json:"_match_details"`
+	RuleReferences  []string `json:"_rule_references"`
+	RuleTags        []string `json:"_rule_tags"`
 
 	// All custom fields must be prefixed with _
-	TimestampHuman  string `json:"_timestamp_human"`
-	EventType       string `json:"_event_type"`     // Specific: process_exec, network_flow, etc.
-	EventCategory   string `json:"_event_category"` // General: process, network
+	TimestampHuman string `json:"_timestamp_human"`
+	EventType      string `json:"_event_type"`     // Specific: process_exec, network_flow, etc.
+	EventCategory  string `json:"_event_category"` // General: process, network
+	SessionUID     string `json:"_session_uid"`
+	ProcessUID     string `json:"_process_uid,omitempty"`
+	NetworkUID     string `json:"_network_uid,omitempty"`
+	ConversationID string `json:"_conversation_id,omitempty"`
+
+	// Process-specific fields
 	ProcessID       int32  `json:"_process_id"`
 	ProcessName     string `json:"_process_name"`
 	ParentID        int32  `json:"_parent_id,omitempty"`
@@ -53,10 +66,6 @@ type gelfMessage struct {
 	ExitCode        uint32 `json:"_exit_code,omitempty"`
 	ProcessDuration string `json:"_process_duration,omitempty"`
 	BinaryHash      string `json:"_binary_hash,omitempty"`
-	SessionUID      string `json:"_session_uid"`
-	ProcessUID      string `json:"_process_uid,omitempty"`
-	NetworkUID      string `json:"_network_uid,omitempty"`
-	ConversationID  string `json:"_conversation_id,omitempty"`
 
 	// Network-specific fields
 	Protocol             string `json:"_protocol,omitempty"`
@@ -418,8 +427,81 @@ func (f *GELFFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 }
 
 func (f *GELFFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
-	// TODO: Implement in Phase 4
-	return nil
+	msg := gelfMessage{
+		Version:    "1.1",
+		Host:       f.getHostname(),
+		Level:      6, // Info level
+		Timestamp:  float64(match.Timestamp.Unix()) + float64(match.Timestamp.Nanosecond())/1000000000,
+		EventType:  "sigma_match",
+		SessionUID: f.sessionUID,
+	}
+
+	// Add Sigma rule information
+	msg.RuleID = match.RuleID
+	msg.RuleName = match.RuleName
+	msg.RuleLevel = match.RuleLevel
+	msg.RuleDescription = match.RuleDescription
+	msg.RuleReferences = match.RuleReferences
+	msg.RuleTags = match.RuleTags
+	if details, ok := match.MatchedFields["details"].(string); ok {
+		msg.MatchDetails = details
+	}
+
+	// Add process context
+	msg.ProcessUID = match.ProcessUID
+	msg.ProcessID = int32(match.PID)
+	if match.ProcessInfo != nil {
+		msg.ProcessName = match.ProcessInfo.Comm
+		msg.CmdLine = match.ProcessInfo.CmdLine
+		msg.WorkingDir = match.ProcessInfo.WorkingDir
+		msg.ParentID = int32(match.ProcessInfo.PPID)
+		msg.Username = match.ProcessInfo.Username
+	}
+
+	// Create short message (appears in log overview)
+	msg.ShortMessage = fmt.Sprintf("sigma_match: %s (Level: %s)",
+		match.RuleName, match.RuleLevel)
+	if match.ProcessInfo != nil {
+		msg.ShortMessage += fmt.Sprintf(" - Process: %s [%d]",
+			match.ProcessInfo.Comm, match.PID)
+	}
+
+	// Create detailed full message
+	var fullMsg strings.Builder
+	fullMsg.WriteString(msg.ShortMessage)
+	fullMsg.WriteString("\n\nRule Details:\n")
+	fullMsg.WriteString(fmt.Sprintf("ID: %s\n", match.RuleID))
+	fullMsg.WriteString(fmt.Sprintf("Description: %s\n", match.RuleDescription))
+	fullMsg.WriteString(fmt.Sprintf("Match Details: %s\n", msg.MatchDetails))
+
+	if len(match.RuleReferences) > 0 {
+		fullMsg.WriteString("\nReferences:\n")
+		for _, ref := range match.RuleReferences {
+			fullMsg.WriteString(fmt.Sprintf("  - %s\n", ref))
+		}
+	}
+
+	if len(match.RuleTags) > 0 {
+		fullMsg.WriteString("\nTags:\n")
+		for _, tag := range match.RuleTags {
+			fullMsg.WriteString(fmt.Sprintf("  - %s\n", tag))
+		}
+	}
+
+	if match.ProcessInfo != nil {
+		fullMsg.WriteString("\nProcess Details:\n")
+		fullMsg.WriteString(fmt.Sprintf("Name: %s (PID: %d)\n",
+			match.ProcessInfo.Comm, match.PID))
+		fullMsg.WriteString(fmt.Sprintf("Command: %s\n", match.ProcessInfo.CmdLine))
+		fullMsg.WriteString(fmt.Sprintf("Working Directory: %s\n",
+			match.ProcessInfo.WorkingDir))
+		fullMsg.WriteString(fmt.Sprintf("Username: %s\n", match.ProcessInfo.Username))
+	}
+
+	msg.FullMessage = fullMsg.String()
+	msg.TimestampHuman = match.Timestamp.UTC().Format(time.RFC3339Nano)
+
+	return f.encoder.Encode(msg)
 }
 
 func (f *GELFFormatter) getHostname() string {
