@@ -205,16 +205,15 @@ func main() {
 				// Create appropriate formatter
 				switch config.format {
 				case "json":
-					formatter = outputformats.NewJSONFormatter(outputFile, hostname, hostIP, globalSessionUid)
+					formatter = outputformats.NewJSONFormatter(outputFile, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				case "json-ecs":
-					formatter = outputformats.NewECSFormatter(outputFile, hostname, hostIP, globalSessionUid)
+					formatter = outputformats.NewECSFormatter(outputFile, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				case "gelf":
-					fmt.Printf("Passing hostname [%v] to NewGELFFormatter\n", hostname)
-					formatter = outputformats.NewGELFFormatter(outputFile, hostname, hostIP, globalSessionUid)
+					formatter = outputformats.NewGELFFormatter(outputFile, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				}
 
 			case "text", "":
-				textFormatter, err := outputformats.NewTextFormatter(logDir, hostname, hostIP, globalSessionUid)
+				textFormatter, err := outputformats.NewTextFormatter(logDir, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				if err != nil {
 					return fmt.Errorf("failed to create text formatter: %v", err)
 				}

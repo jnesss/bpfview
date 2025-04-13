@@ -17,27 +17,30 @@ import (
 
 // TextFormatter implements the original pipe-delimited format
 type TextFormatter struct {
-	processLog *os.File
-	networkLog *os.File
-	dnsLog     *os.File
-	tlsLog     *os.File
-	envLog     *os.File
-	logDir     string
-	sessionUID string
-	hostname   string
-	hostIP     string
-	mu         sync.Mutex
+	processLog   *os.File
+	networkLog   *os.File
+	dnsLog       *os.File
+	tlsLog       *os.File
+	envLog       *os.File
+	sigmaLog     *os.File
+	logDir       string
+	sessionUID   string
+	hostname     string
+	hostIP       string
+	sigmaEnabled bool
+	mu           sync.Mutex
 }
 
-func NewTextFormatter(logDir, hostname, hostIP, sessionUID string) (*TextFormatter, error) {
+func NewTextFormatter(logDir, hostname, hostIP, sessionUID string, enableSigma bool) (*TextFormatter, error) {
 	if logDir == "" {
 		return nil, fmt.Errorf("log directory cannot be empty")
 	}
 	return &TextFormatter{
-		logDir:     logDir,
-		hostname:   hostname,
-		hostIP:     hostIP,
-		sessionUID: sessionUID,
+		logDir:       logDir,
+		hostname:     hostname,
+		hostIP:       hostIP,
+		sessionUID:   sessionUID,
+		sigmaEnabled: enableSigma,
 	}, nil
 }
 
@@ -110,6 +113,20 @@ func (f *TextFormatter) Initialize() error {
 	f.writeTLSHeader()
 	f.writeEnvHeader()
 
+	// Only create sigma log if enabled
+	if f.sigmaEnabled {
+		f.sigmaLog, err = os.OpenFile(
+			filepath.Join(f.logDir, "sigma.log"),
+			os.O_CREATE|os.O_APPEND|os.O_WRONLY,
+			0644,
+		)
+		if err != nil {
+			f.Close()
+			return fmt.Errorf("failed to open sigma log: %v", err)
+		}
+		f.writeSigmaHeader()
+	}
+
 	return nil
 }
 
@@ -150,6 +167,10 @@ func (f *TextFormatter) writeTLSHeader() {
 
 func (f *TextFormatter) writeEnvHeader() {
 	fmt.Fprintln(f.envLog, "timestamp|sessionid|process_uid|uid|pid|comm|env_var")
+}
+
+func (f *TextFormatter) writeSigmaHeader() {
+	fmt.Fprintln(f.sigmaLog, "timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags")
 }
 
 func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
@@ -458,6 +479,68 @@ func (f *TextFormatter) formatEnvironment(event *types.ProcessEvent, info *types
 	return nil
 }
 
+func escapeField(s string) string {
+	return strings.ReplaceAll(s, "|", " pipe ")
+}
+
+func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Format process info fields
+	processName := "-"
+	commandLine := "-"
+	workingDir := "-"
+	if match.ProcessInfo != nil {
+		processName = match.ProcessInfo.Comm
+		commandLine = match.ProcessInfo.CmdLine
+		workingDir = match.ProcessInfo.WorkingDir
+	}
+
+	// Get enriched details
+	description := match.RuleDescription
+	if description == "" {
+		description = "-"
+	} else {
+		description = strings.ReplaceAll(description, "\n", " ") // Flatten description
+	}
+
+	matchDetails := "-"
+	if details, ok := match.MatchedFields["details"].(string); ok {
+		matchDetails = details
+	}
+
+	// Format references and tags
+	references := strings.Join(match.RuleReferences, "; ")
+	if references == "" {
+		references = "-"
+	}
+
+	tags := strings.Join(match.RuleTags, ", ")
+	if tags == "" {
+		tags = "-"
+	}
+
+	// Write log entry
+	_, err := fmt.Fprintf(f.sigmaLog, "%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s\n",
+		match.Timestamp.Format(time.RFC3339Nano),
+		escapeField(match.RuleID),
+		escapeField(match.RuleName),
+		escapeField(match.RuleLevel),
+		escapeField(match.ProcessUID),
+		match.PID,
+		escapeField(processName),
+		escapeField(commandLine),
+		escapeField(workingDir),
+		escapeField(description),
+		escapeField(matchDetails),
+		escapeField(references),
+		escapeField(tags),
+	)
+
+	return err
+}
+
 func (f *TextFormatter) rotateExistingLogs() error {
 	// First check if process.log exists and get its timestamp and session_uid
 	processLogPath := filepath.Join(f.logDir, "process.log")
@@ -476,6 +559,11 @@ func (f *TextFormatter) rotateExistingLogs() error {
 
 	// Log types to check and rotate
 	logTypes := []string{"process", "network", "dns", "tls", "env"}
+
+	// Add sigma.log if enabled
+	if f.sigmaEnabled {
+		logTypes = append(logTypes, "sigma")
+	}
 
 	for _, logType := range logTypes {
 		currentLogPath := filepath.Join(f.logDir, logType+".log")

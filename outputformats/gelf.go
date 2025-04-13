@@ -16,11 +16,12 @@ import (
 // GELFFormatter implements the EventFormatter interface for GELF format
 // GELF spec: https://go2docs.graylog.org/5-0/getting_started/sending_data.html
 type GELFFormatter struct {
-	encoder    *json.Encoder
-	output     io.Writer
-	hostname   string
-	hostIP     string
-	sessionUID string
+	encoder      *json.Encoder
+	output       io.Writer
+	hostname     string
+	hostIP       string
+	sessionUID   string
+	sigmaEnabled bool
 }
 
 // Base GELF message structure - required fields
@@ -83,13 +84,14 @@ type gelfMessage struct {
 	TLSJa4Hash      string   `json:"_tls_ja4_hash,omitempty"`
 }
 
-func NewGELFFormatter(output io.Writer, hostname, hostIP, sessionUID string) *GELFFormatter {
+func NewGELFFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *GELFFormatter {
 	f := &GELFFormatter{
-		output:     output,
-		encoder:    json.NewEncoder(output),
-		hostname:   hostname,
-		hostIP:     hostIP,
-		sessionUID: sessionUID,
+		output:       output,
+		encoder:      json.NewEncoder(output),
+		hostname:     hostname,
+		hostIP:       hostIP,
+		sessionUID:   sessionUID,
+		sigmaEnabled: enableSigma,
 	}
 	f.encoder.SetEscapeHTML(false)
 	return f
@@ -413,6 +415,11 @@ func (f *GELFFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	msg.FullMessage = fullMsg.String()
 
 	return f.encoder.Encode(msg)
+}
+
+func (f *GELFFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
+	// TODO: Implement in Phase 4
+	return nil
 }
 
 func (f *GELFFormatter) getHostname() string {

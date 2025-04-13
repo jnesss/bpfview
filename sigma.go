@@ -16,6 +16,8 @@ import (
 	"github.com/bradleyjkemp/sigma-go"
 	"github.com/bradleyjkemp/sigma-go/evaluator"
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/jnesss/bpfview/types"
 )
 
 type DetectionEvent struct {
@@ -24,15 +26,6 @@ type DetectionEvent struct {
 	Timestamp  time.Time
 	ProcessUID string // Just store process identifier
 	PID        uint32 // Keep PID for potential cache lookup
-}
-
-type MatchResult struct {
-	Rule          sigma.Rule
-	Match         bool
-	Timestamp     time.Time
-	ProcessUID    string
-	PID           uint32
-	MatchedFields map[string]interface{}
 }
 
 type SigmaEngine struct {
@@ -44,9 +37,7 @@ type SigmaEngine struct {
 	eventChan chan DetectionEvent
 	queueSize int
 	dropCount atomic.Int64 // Track dropped events
-
-	running atomic.Bool      // Track if processing worker is running
-	matches chan MatchResult // Channel for match results
+	running   atomic.Bool  // Track if processing worker is running
 }
 
 func NewSigmaEngine(rulesDir string, queueSize int) (*SigmaEngine, error) {
@@ -73,7 +64,6 @@ Either:
 		evaluators: make(map[string]*evaluator.RuleEvaluator),
 		watcher:    watcher,
 		eventChan:  make(chan DetectionEvent, queueSize),
-		matches:    make(chan MatchResult, queueSize),
 		queueSize:  queueSize,
 	}
 
@@ -125,7 +115,6 @@ func (se *SigmaEngine) processEvents() {
 }
 
 func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
-	// Lock evaluators map for reading
 	se.mu.RLock()
 	defer se.mu.RUnlock()
 
@@ -138,25 +127,29 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 		}
 
 		if result.Match {
+			// Convert SearchResults
+			matchDetails := getMatchDetails(evaluator.Rule, result.SearchResults)
 
-			// Convert SearchResults from map[string]bool to map[string]interface{}
-			matchedFields := make(map[string]interface{})
-			for k, v := range result.SearchResults {
-				matchedFields[k] = v
+			// Create SigmaMatch
+			match := &types.SigmaMatch{
+				Timestamp:  evt.Timestamp,
+				RuleID:     evaluator.Rule.ID,
+				RuleName:   evaluator.Rule.Title,
+				RuleLevel:  evaluator.Rule.Level,
+				ProcessUID: evt.ProcessUID,
+				PID:        evt.PID,
+				MatchedFields: map[string]interface{}{
+					"details": matchDetails,
+				},
+				EventData:       evt.Data,
+				RuleDescription: evaluator.Rule.Description,
+				RuleReferences:  evaluator.Rule.References,
+				RuleTags:        evaluator.Rule.Tags,
 			}
 
-			// Create match result
-			match := MatchResult{
-				Rule:          evaluator.Rule,
-				Match:         true,
-				Timestamp:     evt.Timestamp,
-				ProcessUID:    evt.ProcessUID,
-				PID:           evt.PID,
-				MatchedFields: matchedFields,
-			}
-
-			// Try to enrich with process info if available
+			// Try to get process info if available (we wont get it if handleEvent is post process Terminate)
 			if info, exists := GetProcessFromCache(evt.PID); exists {
+				match.ProcessInfo = info
 				log.Printf("Rule match: %s (Process: %s [%d], Command: %s)",
 					evaluator.Rule.Title,
 					info.Comm,
@@ -169,15 +162,11 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 					evt.PID)
 			}
 
-			// Send match result non-blocking
-			select {
-			case se.matches <- match:
-				// Match sent successfully
-			default:
-				// Match channel full
-				se.dropCount.Add(1)
-				log.Printf("WARNING: Dropped match for rule %s due to full queue",
-					evaluator.Rule.Title)
+			// Write match directly to logger
+			if globalLogger != nil {
+				if err := globalLogger.LogSigmaMatch(match); err != nil {
+					log.Printf("Error formatting sigma match: %v", err)
+				}
 			}
 		}
 	}
@@ -188,7 +177,6 @@ func (se *SigmaEngine) Close() error {
 
 	// Close channels
 	close(se.eventChan)
-	close(se.matches)
 
 	// Close watcher
 	if se.watcher != nil {
@@ -286,6 +274,49 @@ func (se *SigmaEngine) loadRuleFile(path string) error {
 
 	log.Printf("Loaded process creation rule: %s (%s)", rule.Title, path)
 	return nil
+}
+
+func getMatchDetails(rule sigma.Rule, searchResults map[string]bool) string {
+	var details strings.Builder
+
+	// Look through each matched search condition
+	for searchName, matched := range searchResults {
+		if !matched {
+			continue
+		}
+
+		// Find the corresponding search in the rule
+		if search, ok := rule.Detection.Searches[searchName]; ok {
+			// Handle field matchers
+			if len(search.EventMatchers) > 0 {
+				for i, matcher := range search.EventMatchers {
+					if i > 0 {
+						details.WriteString(" AND ")
+					}
+					for j, fieldMatch := range matcher {
+						if j > 0 {
+							details.WriteString(" WITH ")
+						}
+						details.WriteString(fmt.Sprintf("'%s' %s '%v'",
+							fieldMatch.Field,
+							strings.Join(fieldMatch.Modifiers, " "),
+							fieldMatch.Values[0])) // Use first value for now
+					}
+				}
+			}
+		}
+	}
+
+	if details.Len() == 0 {
+		if len(rule.Detection.Conditions) > 0 {
+			if marshalledValue, err := rule.Detection.Conditions[0].MarshalYAML(); err == nil {
+				return fmt.Sprintf("matched condition: %v", marshalledValue)
+			}
+		}
+		return "matched"
+	}
+
+	return details.String()
 }
 
 func isProcessCreationRule(rule sigma.Rule) bool {

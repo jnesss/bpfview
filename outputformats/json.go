@@ -13,11 +13,12 @@ import (
 )
 
 type JSONFormatter struct {
-	encoder    *json.Encoder
-	output     io.Writer
-	hostname   string
-	hostIP     string
-	sessionUID string
+	encoder      *json.Encoder
+	output       io.Writer
+	hostname     string
+	hostIP       string
+	sessionUID   string
+	sigmaEnabled bool
 }
 
 // Host information when hostname/IP are enabled
@@ -157,13 +158,14 @@ type TLSJSON struct {
 	Message string `json:"message,omitempty"`
 }
 
-func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string) *JSONFormatter {
+func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *JSONFormatter {
 	f := &JSONFormatter{
-		output:     output,
-		hostname:   hostname,
-		hostIP:     hostIP,
-		sessionUID: sessionUID,
-		encoder:    json.NewEncoder(output),
+		output:       output,
+		hostname:     hostname,
+		hostIP:       hostIP,
+		sessionUID:   sessionUID,
+		sigmaEnabled: enableSigma,
+		encoder:      json.NewEncoder(output),
 	}
 	f.encoder.SetEscapeHTML(false)
 	return f
@@ -487,4 +489,9 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	jsonEvent.Network.DestPort = event.DestPort
 
 	return f.encoder.Encode(jsonEvent)
+}
+
+func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
+	// TODO: Implement in Phase 4
+	return nil
 }

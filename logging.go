@@ -101,3 +101,7 @@ func (l *Logger) LogDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo)
 func (l *Logger) LogTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error {
 	return l.formatter.FormatTLS(event, info)
 }
+
+func (l *Logger) LogSigmaMatch(match *types.SigmaMatch) error {
+	return l.formatter.FormatSigmaMatch(match)
+}

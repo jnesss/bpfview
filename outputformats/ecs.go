@@ -15,11 +15,12 @@ import (
 // ECSFormatter implements the EventFormatter interface for Elastic Common Schema format
 // ECS Reference: https://www.elastic.co/guide/en/ecs/current/ecs-reference.html
 type ECSFormatter struct {
-	encoder    *json.Encoder
-	output     io.Writer
-	hostname   string
-	hostIP     string
-	sessionUID string
+	encoder      *json.Encoder
+	output       io.Writer
+	hostname     string
+	hostIP       string
+	sessionUID   string
+	sigmaEnabled bool
 }
 
 // ECS base event structure
@@ -105,13 +106,14 @@ type ecsEvent struct {
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-func NewECSFormatter(output io.Writer, hostname, hostIP, sessionUID string) *ECSFormatter {
+func NewECSFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *ECSFormatter {
 	f := &ECSFormatter{
-		output:     output,
-		encoder:    json.NewEncoder(output),
-		hostname:   hostname,
-		hostIP:     hostIP,
-		sessionUID: sessionUID,
+		output:       output,
+		encoder:      json.NewEncoder(output),
+		hostname:     hostname,
+		hostIP:       hostIP,
+		sessionUID:   sessionUID,
+		sigmaEnabled: enableSigma,
 	}
 	f.encoder.SetEscapeHTML(false)
 	return f
@@ -394,4 +396,9 @@ func (f *ECSFormatter) createBaseEvent() ecsEvent {
 		HostOS:     "linux",
 		HostKernel: "linux",
 	}
+}
+
+func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
+	// TODO: Implement in Phase 4
+	return nil
 }
