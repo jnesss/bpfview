@@ -25,6 +25,9 @@ sudo bpfview --comm nginx,php-fpm
 
 # Track all container activity
 sudo bpfview --container-id "*"
+
+# Enable Sigma rule detection
+sudo bpfview --sigma-rules ./rules
 ```
 
 ## Key Features
@@ -35,6 +38,9 @@ sudo bpfview --container-id "*"
 - **Environment Capture**: Full process environment variable tracking
 - **DNS & TLS Inspection**: Domain name resolution and TLS handshake monitoring with SNI extraction
 - **Performance Optimized**: Efficient eBPF programs with ring buffer communication
+- **Real-time Sigma Detection**: Process behavior matching against Sigma rules with immediate alerts
+- **Automatic Rule Reloading**: Dynamic rule updates without service restart
+- **Rich Detection Context**: Full process and system context for each rule match
 - **JA4 Fingerprinting**: Generate standardized JA4 fingerprints for TLS Client Hellos for threat actor identification and correlation
 
 ## Technical Capabilities Demonstration
@@ -146,6 +152,15 @@ sudo bpfview --tls-version "1.2,1.3"
 sudo bpfview --sni "api.example.com"
 ```
 
+### Detection Options
+```bash
+# Enable Sigma detection with rules directory
+sudo bpfview --sigma-rules /path/to/rules
+
+# Configure detection queue size
+sudo bpfview --sigma-rules ./rules --sigma-queue-size 20000
+```
+
 ### Output Options
 ```bash
 # Change log level
@@ -239,6 +254,13 @@ timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|s
 2025-04-10T06:39:26.123887892Z|1c024195|c7c48a1c|8a901c9dff2fe5fe|2963841|python3|2887886|bash|172.31.44.65|33720|184.25.113.137|443|TLS 1.0|www.example.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xc02b,0xc02f,0xcca9,0xcca8|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dexamplez508a_c1302|c3173f8a5b2706e8895d0e8115635851
 ```
 
+#### Sigma Events (sigma.log)
+```
+# Behavior matching against Sigma rules with immediate alerts
+timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags
+2025-04-13T15:10:22.187053433Z|e2072cab-8c9a-459b-b63c-40ae79e27031|Decode Base64 Encoded Text|low|90c391c0|187348|base64|base64 -d|/home/ec2-user|Detects usage of base64 utility to decode arbitrary base64-encoded text|'Image' endswith '/base64' WITH 'CommandLine' contains '-d'|https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1027/T1027.md|attack.defense-evasion, attack.t1027
+```
+
 ### Analysis Examples
 
 #### Trace DNS Resolution Chain
@@ -262,6 +284,87 @@ $ grep "www.apple.com" tls.log
 # Find corresponding network traffic
 $ grep db79358f24023b06 network.log
 2025-04-09T02:40:41.482210178Z|60d6378b|4f016e0|db79358f24023b06|2904710|curl|2877411|bash|TCP|172.31.44.65|41054|23.221.245.25|443|>|60
+```
+
+### Sigma Detection Events
+
+BPFView supports real-time Sigma rule detection:
+
+```bash
+# Enable Sigma detection with default rules directory
+sudo bpfview --sigma-rules ./rules
+
+# Customize detection queue size
+sudo bpfview --sigma-rules ./rules --sigma-queue-size 20000
+```
+
+Detection events are logged in all supported formats:
+
+#### Text Format (sigma.log)
+```
+timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags
+2025-04-13T15:10:22.187Z|e2072cab-8c9a-459b|Base64 Decode|low|90c391c0|187348|base64|base64 -d|/home/ec2-user|Detects base64 decode usage|'Image' endswith '/base64'|https://example.com/ref|attack.t1027
+```
+
+#### JSON Format
+```json
+{
+  "timestamp": "2025-04-13T15:33:17.331820665Z",
+  "session_uid": "dbec1958",
+  "event_type": "sigma_match",
+  "rule": {
+    "id": "e2072cab-8c9a-459b",
+    "name": "Base64 Decode",
+    "level": "low",
+    "description": "Detects base64 decode usage",
+    "match_details": "'Image' endswith '/base64'",
+    "references": ["https://example.com/ref"],
+    "tags": ["attack.t1027"]
+  },
+  "process": {
+    "pid": 187348,
+    "name": "base64",
+    "command_line": "base64 -d"
+  }
+}
+```
+
+#### ECS Format
+```json
+{
+  "@timestamp": "2025-04-13T15:33:17.331820665Z",
+  "event.type": "sigma",
+  "event.category": "detection",
+  "event.kind": "alert",
+  "rule.id": "e2072cab-8c9a-459b",
+  "rule.name": "Base64 Decode",
+  "rule.level": "low",
+  "process.name": "base64",
+  "process.command_line": "base64 -d"
+}
+```
+
+#### GELF Format 
+```json
+{
+  "version": "1.1",
+  "short_message": "sigma_match: Base64 Decode",
+  "timestamp": 1744562662.865564,
+  "_rule_id": "e2072cab-8c9a-459b",
+  "_rule_name": "Base64 Decode",
+  "_rule_level": "low",
+  "_process_name": "base64",
+  "_cmdline": "base64 -d"
+}
+```
+
+Events can be correlated across logs using process_uid:
+```bash
+# Find detection details
+grep "e2072cab-8c9a-459b" sigma.log
+
+# Find process that triggered the rule
+grep "90c391c0" process.log
 ```
 
 ## Output Formats
@@ -420,6 +523,7 @@ BPFView is built with several core design principles in mind:
 | TLS/SNI Visibility | ✅ | ❌ | ✅ | ❌ |
 | JA4 Fingerprinting | ✅ | ❌ | ✅ | ❌ |
 | Process Tree Tracking | ✅ | ❌ | ❌ | ❌ |
+| Sigma Rule Detection | ✅ | ❌ | ❌ | ❌ |
 | Performance Impact | Low | Low | High | Medium |
 
 ## Installation and Platform Support

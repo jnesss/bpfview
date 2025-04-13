@@ -13,11 +13,12 @@ import (
 )
 
 type JSONFormatter struct {
-	encoder    *json.Encoder
-	output     io.Writer
-	hostname   string
-	hostIP     string
-	sessionUID string
+	encoder      *json.Encoder
+	output       io.Writer
+	hostname     string
+	hostIP       string
+	sessionUID   string
+	sigmaEnabled bool
 }
 
 // Host information when hostname/IP are enabled
@@ -157,13 +158,38 @@ type TLSJSON struct {
 	Message string `json:"message,omitempty"`
 }
 
-func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string) *JSONFormatter {
+type SigmaMatchJSON struct {
+	Timestamp  string    `json:"timestamp"`
+	SessionUID string    `json:"session_uid"`
+	Host       *HostInfo `json:"host,omitempty"`
+	EventType  string    `json:"event_type"` // Will be "sigma_match"
+	Rule       struct {
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		Level        string   `json:"level"`
+		Description  string   `json:"description"`
+		MatchDetails string   `json:"match_details"` // Human readable match conditions
+		References   []string `json:"references"`
+		Tags         []string `json:"tags"`
+	} `json:"rule"`
+	Process struct {
+		UID         string `json:"process_uid"`
+		PID         uint32 `json:"pid"`
+		Name        string `json:"name"`
+		CommandLine string `json:"command_line"`
+		WorkingDir  string `json:"working_directory"`
+	} `json:"process"`
+	Message string `json:"message"`
+}
+
+func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *JSONFormatter {
 	f := &JSONFormatter{
-		output:     output,
-		hostname:   hostname,
-		hostIP:     hostIP,
-		sessionUID: sessionUID,
-		encoder:    json.NewEncoder(output),
+		output:       output,
+		hostname:     hostname,
+		hostIP:       hostIP,
+		sessionUID:   sessionUID,
+		sigmaEnabled: enableSigma,
+		encoder:      json.NewEncoder(output),
 	}
 	f.encoder.SetEscapeHTML(false)
 	return f
@@ -485,6 +511,52 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	jsonEvent.Network.SourcePort = event.SourcePort
 	jsonEvent.Network.DestIP = event.DestIP.String()
 	jsonEvent.Network.DestPort = event.DestPort
+
+	return f.encoder.Encode(jsonEvent)
+}
+
+func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
+	jsonEvent := SigmaMatchJSON{
+		Timestamp:  match.Timestamp.UTC().Format(time.RFC3339Nano),
+		SessionUID: f.sessionUID,
+		EventType:  "sigma_match",
+	}
+
+	// Add host info if enabled
+	if f.hostname != "" || f.hostIP != "" {
+		jsonEvent.Host = &HostInfo{
+			Name: f.hostname,
+			IP:   f.hostIP,
+		}
+	}
+
+	// Fill rule information
+	jsonEvent.Rule.ID = match.RuleID
+	jsonEvent.Rule.Name = match.RuleName
+	jsonEvent.Rule.Level = match.RuleLevel
+	jsonEvent.Rule.Description = match.RuleDescription
+	if details, ok := match.MatchedFields["details"].(string); ok {
+		jsonEvent.Rule.MatchDetails = details
+	}
+	jsonEvent.Rule.References = match.RuleReferences
+	jsonEvent.Rule.Tags = match.RuleTags
+
+	// Add process context
+	jsonEvent.Process.UID = match.ProcessUID
+	jsonEvent.Process.PID = match.PID
+	if match.ProcessInfo != nil {
+		jsonEvent.Process.Name = match.ProcessInfo.Comm
+		jsonEvent.Process.CommandLine = match.ProcessInfo.CmdLine
+		jsonEvent.Process.WorkingDir = match.ProcessInfo.WorkingDir
+	}
+
+	// Create descriptive message
+	jsonEvent.Message = fmt.Sprintf("Sigma rule match: %s (Level: %s)",
+		match.RuleName, match.RuleLevel)
+	if match.ProcessInfo != nil {
+		jsonEvent.Message += fmt.Sprintf(" - Process: %s [%d]",
+			match.ProcessInfo.Comm, match.PID)
+	}
 
 	return f.encoder.Encode(jsonEvent)
 }

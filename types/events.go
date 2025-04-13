@@ -187,3 +187,18 @@ type UserSpaceTLSEvent struct {
 	JA4               string
 	JA4Hash           string
 }
+
+type SigmaMatch struct {
+	Timestamp       time.Time
+	RuleID          string
+	RuleName        string
+	RuleLevel       string
+	ProcessUID      string
+	PID             uint32
+	ProcessInfo     *ProcessInfo // May be nil if process no longer in cache
+	MatchedFields   map[string]interface{}
+	EventData       map[string]interface{} // Original event data that matched
+	RuleDescription string
+	RuleReferences  []string
+	RuleTags        []string
+}

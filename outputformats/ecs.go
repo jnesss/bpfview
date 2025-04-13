@@ -15,11 +15,12 @@ import (
 // ECSFormatter implements the EventFormatter interface for Elastic Common Schema format
 // ECS Reference: https://www.elastic.co/guide/en/ecs/current/ecs-reference.html
 type ECSFormatter struct {
-	encoder    *json.Encoder
-	output     io.Writer
-	hostname   string
-	hostIP     string
-	sessionUID string
+	encoder      *json.Encoder
+	output       io.Writer
+	hostname     string
+	hostIP       string
+	sessionUID   string
+	sigmaEnabled bool
 }
 
 // ECS base event structure
@@ -101,17 +102,30 @@ type ecsEvent struct {
 	TLSClientJa4Hash   string   `json:"tls.client.ja4_hash,omitempty"`
 	TLSClientSupported []string `json:"tls.client.supported_ciphers,omitempty"`
 
+	// Rule information (following ECS rule.* naming)
+	RuleID          string   `json:"rule.id,omitempty"`
+	RuleName        string   `json:"rule.name,omitempty"`
+	RuleDescription string   `json:"rule.description,omitempty"`
+	RuleLevel       string   `json:"rule.level,omitempty"`
+	RuleReferences  []string `json:"rule.reference,omitempty"`
+	RuleTags        []string `json:"rule.tags,omitempty"`
+
+	// Detection details
+	DetectionDetails string                 `json:"rule.matched_details,omitempty"`
+	DetectionFields  map[string]interface{} `json:"rule.matched_fields,omitempty"`
+
 	// Custom fields for correlation
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-func NewECSFormatter(output io.Writer, hostname, hostIP, sessionUID string) *ECSFormatter {
+func NewECSFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *ECSFormatter {
 	f := &ECSFormatter{
-		output:     output,
-		encoder:    json.NewEncoder(output),
-		hostname:   hostname,
-		hostIP:     hostIP,
-		sessionUID: sessionUID,
+		output:       output,
+		encoder:      json.NewEncoder(output),
+		hostname:     hostname,
+		hostIP:       hostIP,
+		sessionUID:   sessionUID,
+		sigmaEnabled: enableSigma,
 	}
 	f.encoder.SetEscapeHTML(false)
 	return f
@@ -394,4 +408,57 @@ func (f *ECSFormatter) createBaseEvent() ecsEvent {
 		HostOS:     "linux",
 		HostKernel: "linux",
 	}
+}
+
+func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
+	ecsEvent := f.createBaseEvent()
+	ecsEvent.Type = "sigma"
+	ecsEvent.Category = "detection"
+	ecsEvent.Kind = "alert"
+	ecsEvent.Outcome = "success"
+
+	// Add rule information
+	ecsEvent.RuleID = match.RuleID
+	ecsEvent.RuleName = match.RuleName
+	ecsEvent.RuleDescription = match.RuleDescription
+	ecsEvent.RuleLevel = match.RuleLevel
+	ecsEvent.RuleReferences = match.RuleReferences
+	ecsEvent.RuleTags = match.RuleTags
+
+	// Add detection details
+	if details, ok := match.MatchedFields["details"].(string); ok {
+		ecsEvent.DetectionDetails = details
+	}
+	ecsEvent.DetectionFields = match.MatchedFields
+
+	// Add process context
+	ecsEvent.ProcessPID = int64(match.PID)
+	if match.ProcessInfo != nil {
+		ecsEvent.ProcessName = match.ProcessInfo.Comm
+		ecsEvent.ProcessCwd = match.ProcessInfo.WorkingDir
+		ecsEvent.ProcessCommand = match.ProcessInfo.CmdLine
+
+		if match.ProcessInfo.Username != "" {
+			ecsEvent.UserName = match.ProcessInfo.Username
+		}
+		if match.ProcessInfo.PPID > 0 {
+			ecsEvent.ParentProcessPID = int64(match.ProcessInfo.PPID)
+		}
+	}
+
+	// Create descriptive message
+	ecsEvent.Message = fmt.Sprintf("Sigma rule match: %s (Level: %s)",
+		match.RuleName, match.RuleLevel)
+	if match.ProcessInfo != nil {
+		ecsEvent.Message += fmt.Sprintf(" - Process: %s [%d]",
+			match.ProcessInfo.Comm, match.PID)
+	}
+
+	// Add correlation IDs in labels
+	ecsEvent.Labels = map[string]string{
+		"session_uid": f.sessionUID,
+		"process_uid": match.ProcessUID,
+	}
+
+	return f.encoder.Encode(ecsEvent)
 }

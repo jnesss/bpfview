@@ -51,22 +51,25 @@ type readerContext struct {
 }
 
 var (
-	globalLogger     *Logger
-	globalEngine     *FilterEngine
-	globalSessionUid string
+	globalLogger      *Logger
+	globalEngine      *FilterEngine
+	globalSigmaEngine *SigmaEngine
+	globalSessionUid  string
 )
 
 var BootTime time.Time
 
 func main() {
 	var config struct {
-		logLevel      string
-		showTimestamp bool
-		filterConfig  FilterConfig
-		HashBinaries  bool
-		format        string
-		addHostname   bool
-		addIP         bool
+		logLevel       string
+		showTimestamp  bool
+		filterConfig   FilterConfig
+		HashBinaries   bool
+		format         string
+		addHostname    bool
+		addIP          bool
+		sigmaRulesDir  string
+		sigmaQueueSize int
 	}
 
 	rootCmd := &cobra.Command{
@@ -202,16 +205,15 @@ func main() {
 				// Create appropriate formatter
 				switch config.format {
 				case "json":
-					formatter = outputformats.NewJSONFormatter(outputFile, hostname, hostIP, globalSessionUid)
+					formatter = outputformats.NewJSONFormatter(outputFile, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				case "json-ecs":
-					formatter = outputformats.NewECSFormatter(outputFile, hostname, hostIP, globalSessionUid)
+					formatter = outputformats.NewECSFormatter(outputFile, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				case "gelf":
-					fmt.Printf("Passing hostname [%v] to NewGELFFormatter\n", hostname)
-					formatter = outputformats.NewGELFFormatter(outputFile, hostname, hostIP, globalSessionUid)
+					formatter = outputformats.NewGELFFormatter(outputFile, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				}
 
 			case "text", "":
-				textFormatter, err := outputformats.NewTextFormatter(logDir, hostname, hostIP, globalSessionUid)
+				textFormatter, err := outputformats.NewTextFormatter(logDir, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				if err != nil {
 					return fmt.Errorf("failed to create text formatter: %v", err)
 				}
@@ -246,6 +248,20 @@ func main() {
 			log.Println("Initializing process cache...")
 			initializeProcessCache()
 			log.Println("Process cache initialized")
+
+			if config.sigmaRulesDir != "" {
+				var err error
+				globalSigmaEngine, err = NewSigmaEngine(config.sigmaRulesDir, config.sigmaQueueSize)
+				if err != nil {
+					return fmt.Errorf("failed to initialize sigma detection: %v", err)
+				}
+				defer globalSigmaEngine.Close()
+
+				// Log initial state
+				log.Printf("Sigma detection enabled:")
+				log.Printf("  - Rules directory: %s", config.sigmaRulesDir)
+				log.Printf("  - Event queue size: %d", config.sigmaQueueSize)
+			}
 
 			log.Println("Initializing BPF programs...")
 			objs, err := setupBPF()
@@ -334,7 +350,13 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExePaths, "exe", nil, "Filter by executable path (exact or prefix)")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ContainerIDs, "container-id", nil, "Filter by container ID (use '*' to match any container)")
 	rootCmd.PersistentFlags().BoolVar(&config.filterConfig.TrackTree, "tree", false, "Track process tree")
+
+	// Optional features
 	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
+	rootCmd.Flags().StringVar(&config.sigmaRulesDir, "sigma-rules", "",
+		"Directory containing Sigma rules (if not specified, Sigma detection is disabled)")
+	rootCmd.Flags().IntVar(&config.sigmaQueueSize, "sigma-queue-size", 10000,
+		"Maximum number of events to queue for Sigma detection")
 
 	// Network filters
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.Protocols, "protocol", nil, "Filter by protocol (TCP, UDP, ICMP)")
@@ -385,6 +407,13 @@ DNS Filters:
 TLS Filters:
   --tls-version strings Filter by TLS version (1.0, 1.1, 1.2, 1.3)
   --sni strings         Filter by SNI hostname (supports wildcards)
+  
+Optional Features:
+  --hash-binaries      Calculate and log MD5 hashes of executables
+                       Useful for threat hunting and malware detection
+  --sigma-rules        Directory containing Sigma rules 
+                       If not specified, Sigma detection is disabled
+  --sigma-queue-size   Maximum number of events to queue for Sigma detection
 
 Output Options:
   --format string       Select output format (default "text"):
@@ -402,10 +431,7 @@ Output Options:
                          trace   - Very verbose debugging
   
   --log-timestamp      Add timestamps to console messages
-  
-  --hash-binaries      Calculate and log MD5 hashes of executables
-                       Useful for threat hunting and malware detection
-  
+    
   --add-hostname       Add system hostname to all log entries
                        Recommended when collecting from multiple hosts
   
