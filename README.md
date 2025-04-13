@@ -264,6 +264,87 @@ $ grep db79358f24023b06 network.log
 2025-04-09T02:40:41.482210178Z|60d6378b|4f016e0|db79358f24023b06|2904710|curl|2877411|bash|TCP|172.31.44.65|41054|23.221.245.25|443|>|60
 ```
 
+### Sigma Detection Events
+
+BPFView supports real-time Sigma rule detection:
+
+```bash
+# Enable Sigma detection with default rules directory
+sudo bpfview --sigma-rules ./rules
+
+# Customize detection queue size
+sudo bpfview --sigma-rules ./rules --sigma-queue-size 20000
+```
+
+Detection events are logged in all supported formats:
+
+#### Text Format (sigma.log)
+```
+timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags
+2025-04-13T15:10:22.187Z|e2072cab-8c9a-459b|Base64 Decode|low|90c391c0|187348|base64|base64 -d|/home/ec2-user|Detects base64 decode usage|'Image' endswith '/base64'|https://example.com/ref|attack.t1027
+```
+
+#### JSON Format
+```json
+{
+  "timestamp": "2025-04-13T15:33:17.331820665Z",
+  "session_uid": "dbec1958",
+  "event_type": "sigma_match",
+  "rule": {
+    "id": "e2072cab-8c9a-459b",
+    "name": "Base64 Decode",
+    "level": "low",
+    "description": "Detects base64 decode usage",
+    "match_details": "'Image' endswith '/base64'",
+    "references": ["https://example.com/ref"],
+    "tags": ["attack.t1027"]
+  },
+  "process": {
+    "pid": 187348,
+    "name": "base64",
+    "command_line": "base64 -d"
+  }
+}
+```
+
+#### ECS Format
+```json
+{
+  "@timestamp": "2025-04-13T15:33:17.331820665Z",
+  "event.type": "sigma",
+  "event.category": "detection",
+  "event.kind": "alert",
+  "rule.id": "e2072cab-8c9a-459b",
+  "rule.name": "Base64 Decode",
+  "rule.level": "low",
+  "process.name": "base64",
+  "process.command_line": "base64 -d"
+}
+```
+
+#### GELF Format 
+```json
+{
+  "version": "1.1",
+  "short_message": "sigma_match: Base64 Decode",
+  "timestamp": 1744562662.865564,
+  "_rule_id": "e2072cab-8c9a-459b",
+  "_rule_name": "Base64 Decode",
+  "_rule_level": "low",
+  "_process_name": "base64",
+  "_cmdline": "base64 -d"
+}
+```
+
+Events can be correlated across logs using process_uid:
+```bash
+# Find detection details
+grep "e2072cab-8c9a-459b" sigma.log
+
+# Find process that triggered the rule
+grep "90c391c0" process.log
+```
+
 ## Output Formats
 
 BPFView supports multiple output formats:
