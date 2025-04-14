@@ -159,12 +159,12 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 			for _, q := range userEvent.Questions {
 				// Map fields for Sigma detection
 				sigmaEvent := map[string]interface{}{
-					"ProcessId":    userEvent.Pid,
-					"ProcessName":  userEvent.Comm,
-					"DestHostname": q.Name,
-					"Initiated":    true,
-					"Image":        processInfo.ExePath, // from process info
-					"CommandLine":  processInfo.CmdLine, // from process info
+					"ProcessId":           userEvent.Pid,
+					"ProcessName":         userEvent.Comm,
+					"DestinationHostname": q.Name,
+					"Initiated":           true,
+					"Image":               processInfo.ExePath, // from process info
+					"CommandLine":         processInfo.CmdLine, // from process info
 				}
 
 				// Create detection event
