@@ -86,8 +86,8 @@ func (l *Logger) log(level LogLevel, component string, format string, args ...in
 }
 
 // Event logging methods that use the formatter
-func (l *Logger) LogProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
-	return l.formatter.FormatProcess(event, info)
+func (l *Logger) LogProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error {
+	return l.formatter.FormatProcess(event, info, parentinfo)
 }
 
 func (l *Logger) LogNetwork(event *types.NetworkEvent, info *types.ProcessInfo) error {
