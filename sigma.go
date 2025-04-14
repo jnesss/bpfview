@@ -119,6 +119,9 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 	se.mu.RLock()
 	defer se.mu.RUnlock()
 
+	globalLogger.Debug("sigma", "Processing detection event type: %s, source: %s",
+		evt.EventType, evt.DetectionSource)
+
 	// Check each rule
 	for _, evaluator := range se.evaluators {
 		result, err := evaluator.Matches(context.Background(), evt.Data)
@@ -128,6 +131,9 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 		}
 
 		if result.Match {
+
+			globalLogger.Debug("sigma", "Rule matched: %s", evaluator.Rule.Title)
+
 			// Convert SearchResults
 			matchDetails := getMatchDetails(evaluator.Rule, result.SearchResults)
 
@@ -146,6 +152,7 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 				RuleDescription: evaluator.Rule.Description,
 				RuleReferences:  evaluator.Rule.References,
 				RuleTags:        evaluator.Rule.Tags,
+				DetectionSource: evt.DetectionSource,
 			}
 
 			// Try to get process info if available (we wont get it if handleEvent is post process Terminate)
@@ -314,13 +321,19 @@ func getMatchDetails(rule sigma.Rule, searchResults map[string]bool) string {
 					if i > 0 {
 						details.WriteString(" AND ")
 					}
+
 					for j, fieldMatch := range matcher {
 						if j > 0 {
 							details.WriteString(" WITH ")
 						}
+
+						op := "equals"
+						if len(fieldMatch.Modifiers) > 0 {
+							op = strings.Join(fieldMatch.Modifiers, " ")
+						}
 						details.WriteString(fmt.Sprintf("'%s' %s '%v'",
 							fieldMatch.Field,
-							strings.Join(fieldMatch.Modifiers, " "),
+							op,
 							fieldMatch.Values[0])) // Use first value for now
 					}
 				}
