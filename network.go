@@ -91,6 +91,40 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 			globalLogger.LogNetwork(event, &types.ProcessInfo{})
 		}
 	}
+
+	if globalSigmaEngine != nil {
+
+		// Get process info from cache
+		var processInfo *types.ProcessInfo
+		if info, exists := GetProcessFromCache(event.Pid); exists {
+			processInfo = info
+		} else {
+			processInfo = &types.ProcessInfo{}
+		}
+
+		// Map fields for Sigma detection
+		sigmaEvent := map[string]interface{}{
+			"ProcessId":   event.Pid,
+			"ProcessName": string(bytes.TrimRight(event.Comm[:], "\x00")),
+			"Image":       processInfo.ExePath,
+			"CommandLine": processInfo.CmdLine,
+			"DestPort":    event.DstPort,
+			"DestIP":      ipToString(event.DstIP),
+			"Initiated":   event.Direction == types.FLOW_EGRESS,
+		}
+
+		// Create detection event
+		detectionEvent := DetectionEvent{
+			EventType:       "network_connection",
+			Data:            sigmaEvent,
+			Timestamp:       BpfTimestampToTime(event.Timestamp),
+			ProcessUID:      processInfo.ProcessUID,
+			PID:             event.Pid,
+			DetectionSource: "network_connection",
+		}
+
+		globalSigmaEngine.SubmitEvent(detectionEvent)
+	}
 }
 
 // Program loading functions
