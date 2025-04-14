@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/jnesss/bpfview/outputformats" // for GenerateConnID utility function
 	"github.com/jnesss/bpfview/types"
 )
 
@@ -36,7 +37,7 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 	dstIP := net.IPv4(event.DAddrA, event.DAddrB, event.DAddrC, event.DAddrD)
 
 	// Generate connection ID
-	uid := generateConnID(event.Pid, event.Ppid, srcIP, dstIP, event.SPort, event.DPort)
+	uid := outputformats.GenerateConnID(event.Pid, event.Ppid, srcIP, dstIP, event.SPort, event.DPort)
 
 	// Construct userspace event
 	userEvent := types.UserSpaceTLSEvent{
