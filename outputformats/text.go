@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,7 +169,7 @@ func (f *TextFormatter) writeEnvHeader() {
 }
 
 func (f *TextFormatter) writeSigmaHeader() {
-	fmt.Fprintln(f.sigmaLog, "timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags")
+	fmt.Fprintln(f.sigmaLog, "timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags|detection_source")
 }
 
 func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
@@ -179,14 +178,7 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 
 	event_timestamp := BpfTimestampToTime(event.Timestamp)
 	event_timeStr := event_timestamp.Format(time.RFC3339Nano)
-
-	h := fnv.New32a()
-	start_timeStr := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", start_timeStr, info.PID)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	eventUID := fmt.Sprintf("%x", h.Sum32())
+	eventUID := info.ProcessUID
 
 	eventType := "EXEC"
 	if event.EventType == types.EVENT_PROCESS_EXIT {
@@ -273,14 +265,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		direction = "<"
 	}
 
-	// Calculate process_uid for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	processUID := fmt.Sprintf("%x", h.Sum32())
+	processUID := info.ProcessUID
 
 	_, err := fmt.Fprintf(f.networkLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d\n",
 		timestamp.Format(time.RFC3339Nano),
@@ -315,14 +300,7 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		eventType = "RESPONSE"
 	}
 
-	// Calculate process_uid for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	processUID := fmt.Sprintf("%x", h.Sum32())
+	processUID := info.ProcessUID
 
 	if !event.IsResponse {
 		// For queries, log the questions
@@ -392,15 +370,7 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
 	network_uid := generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
-
-	// Calculate process_uid for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	processUID := fmt.Sprintf("%x", h.Sum32())
+	processUID := info.ProcessUID
 
 	// Format cipher suites
 	cipherSuites := formatCipherSuites(event.CipherSuites)
@@ -447,14 +417,7 @@ func (f *TextFormatter) formatEnvironment(event *types.ProcessEvent, info *types
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
 	timeStr := timestamp.Format(time.RFC3339Nano)
-
-	// Generate unique ID (same as process event)
-	h := fnv.New32a()
-	h.Write([]byte(fmt.Sprintf("%s-%d", timeStr, info.PID)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	eventUID := fmt.Sprintf("%x", h.Sum32())
+	eventUID := info.ProcessUID
 
 	comm := cleanField(info.Comm, "-")
 
@@ -487,7 +450,7 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Format process info fields
+	// Format process info fields (existing)
 	processName := "-"
 	commandLine := "-"
 	workingDir := "-"
@@ -497,12 +460,12 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 		workingDir = match.ProcessInfo.WorkingDir
 	}
 
-	// Get enriched details
+	// Get enriched details (existing)
 	description := match.RuleDescription
 	if description == "" {
 		description = "-"
 	} else {
-		description = strings.ReplaceAll(description, "\n", " ") // Flatten description
+		description = strings.ReplaceAll(description, "\n", " ")
 	}
 
 	matchDetails := "-"
@@ -510,19 +473,24 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 		matchDetails = details
 	}
 
-	// Format references and tags
+	// Format references and tags (existing)
 	references := strings.Join(match.RuleReferences, "; ")
 	if references == "" {
 		references = "-"
 	}
-
 	tags := strings.Join(match.RuleTags, ", ")
 	if tags == "" {
 		tags = "-"
 	}
 
-	// Write log entry
-	_, err := fmt.Fprintf(f.sigmaLog, "%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s\n",
+	// Format detection source
+	detectionSource := "process_creation" // default for existing process rules
+	if match.DetectionSource != "" {
+		detectionSource = match.DetectionSource // "dns_query" or "network_connection"
+	}
+
+	// Write log entry (added detection_source field)
+	_, err := fmt.Fprintf(f.sigmaLog, "%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s\n",
 		match.Timestamp.Format(time.RFC3339Nano),
 		escapeField(match.RuleID),
 		escapeField(match.RuleName),
@@ -536,6 +504,7 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 		escapeField(matchDetails),
 		escapeField(references),
 		escapeField(tags),
+		escapeField(detectionSource),
 	)
 
 	return err
