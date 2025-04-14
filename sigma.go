@@ -233,6 +233,24 @@ func (se *SigmaEngine) loadAllRules() error {
 	})
 }
 
+func hasAnyField(detection sigma.Detection, fields []string) bool {
+	// Check each search condition in the detection
+	for _, search := range detection.Searches {
+		// Check each matcher in the search
+		for _, matchers := range search.EventMatchers {
+			for _, matcher := range matchers {
+				// Check if the field name is in our list
+				for _, field := range fields {
+					if matcher.Field == field {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (se *SigmaEngine) loadRuleFile(path string) error {
 	content, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -374,7 +392,7 @@ func isNetworkRule(rule sigma.Rule) bool {
 		strings.Contains(strings.ToLower(rule.Description), "connection") ||
 		strings.Contains(strings.ToLower(rule.Description), "dns") ||
 		// Look for network indicators in detection fields
-		rule.Detection.HasAnyField([]string{"DestinationHostname", "DestinationPort", "DestinationIp"})) {
+		hasAnyField(rule.Detection, []string{"DestinationHostname", "DestinationPort", "DestinationIp"})) {
 		return true
 	}
 
