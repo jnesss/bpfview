@@ -135,15 +135,6 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	// Log the complete message through the logger
 	globalLogger.Info("dns", "%s", msg.String())
 
-	// Handle the file logging through the formatter
-	if globalLogger != nil {
-		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
-			return globalLogger.LogDNS(&userEvent, processinfo)
-		} else {
-			return globalLogger.LogDNS(&userEvent, &types.ProcessInfo{})
-		}
-	}
-
 	// Submit to Sigma detection if enabled
 	if globalSigmaEngine != nil {
 		// For DNS queries
@@ -167,6 +158,9 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 					"CommandLine":         processInfo.CmdLine, // from process info
 				}
 
+				// Debug log
+				globalLogger.Debug("sigma", "Creating DNS query detection event for %s", q.Name)
+
 				// Create detection event
 				detectionEvent := DetectionEvent{
 					EventType:       "network_connection",
@@ -179,6 +173,15 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 
 				globalSigmaEngine.SubmitEvent(detectionEvent)
 			}
+		}
+	}
+
+	// Handle the file logging through the formatter
+	if globalLogger != nil {
+		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
+			return globalLogger.LogDNS(&userEvent, processinfo)
+		} else {
+			return globalLogger.LogDNS(&userEvent, &types.ProcessInfo{})
 		}
 	}
 
