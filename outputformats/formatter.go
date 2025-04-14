@@ -7,7 +7,7 @@ type EventFormatter interface {
 	Initialize() error
 	Close() error
 
-	FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error
+	FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error
 	FormatNetwork(event *types.NetworkEvent, info *types.ProcessInfo) error
 	FormatDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo) error
 	FormatTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error
