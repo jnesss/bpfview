@@ -164,9 +164,16 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 
 	globalLogger.Info("process", "%s", msg.String())
 
+	var parentinfo *types.ProcessInfo
+	if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
+		parentinfo = pinfo
+	} else {
+		parentinfo = &types.ProcessInfo{}
+	}
+
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {
-		globalLogger.LogProcess(event, info)
+		globalLogger.LogProcess(event, info, parentinfo)
 	}
 
 	// Remove process from cache one second later after processing EXIT
@@ -218,7 +225,7 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 
 	// Build the message using strings.Builder
 	var msg strings.Builder
-	fmt.Fprintf(&msg, "EXEC: PID=%d comm=%s\n", enrichedInfo.PID, enrichedInfo.Comm)
+	fmt.Fprintf(&msg, "EXEC: PID=%d comm=%s ProcessUID=%s\n", enrichedInfo.PID, enrichedInfo.Comm, enrichedInfo.ProcessUID)
 	fmt.Fprintf(&msg, "      Parent: [%d] %s\n", enrichedInfo.PPID, parentComm)
 	fmt.Fprintf(&msg, "      User: %s (%d/%d)\n", enrichedInfo.Username, enrichedInfo.UID, enrichedInfo.GID)
 	fmt.Fprintf(&msg, "      Path: %s", enrichedInfo.ExePath)
@@ -234,46 +241,38 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 
 	globalLogger.Info("process", "%s", msg.String())
 
+	var parentinfo *types.ProcessInfo
+	if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
+		parentinfo = pinfo
+	} else {
+		parentinfo = &types.ProcessInfo{}
+	}
+
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {
-		globalLogger.LogProcess(event, enrichedInfo)
+		globalLogger.LogProcess(event, enrichedInfo, parentinfo)
 	}
 
 	// If Sigma detection is enabled, submit event
 	if globalSigmaEngine != nil {
-		// Map fields to Sigma format
+		// Include core fields needed for Sigma rule matching
 		sigmaEvent := map[string]interface{}{
 			"Image":            enrichedInfo.ExePath,
-			"CommandLine":      enrichedInfo.CmdLine,
-			"ProcessId":        enrichedInfo.PID,
+			"CmdLine":          enrichedInfo.CmdLine,
+			"ProcessName":      enrichedInfo.Comm,
 			"ParentProcessId":  enrichedInfo.PPID,
 			"User":             enrichedInfo.Username,
 			"CurrentDirectory": enrichedInfo.WorkingDir,
 		}
 
-		// Add parent info if available
-		if parentInfo, exists := GetProcessFromCache(enrichedInfo.PPID); exists {
-			sigmaEvent["ParentImage"] = parentInfo.ExePath
-			sigmaEvent["ParentCommandLine"] = parentInfo.CmdLine
-		}
-
-		// Generate process UID for correlation
-		//  Ugh, we're doing this twice now.  FIX!
-		h := fnv.New32a()
-		processStartTime := BpfTimestampToTime(event.Timestamp)
-		h.Write([]byte(fmt.Sprintf("%s-%d", processStartTime.Format(time.RFC3339Nano), enrichedInfo.PID)))
-		if enrichedInfo.ExePath != "" {
-			h.Write([]byte(enrichedInfo.ExePath))
-		}
-		processUID := fmt.Sprintf("%x", h.Sum32())
-
 		// Create detection event
 		detectionEvent := DetectionEvent{
-			EventType:  "process_creation",
-			Data:       sigmaEvent,
-			Timestamp:  BpfTimestampToTime(event.Timestamp),
-			ProcessUID: processUID,
-			PID:        enrichedInfo.PID,
+			EventType:       "process_creation",
+			Data:            sigmaEvent,
+			Timestamp:       BpfTimestampToTime(event.Timestamp),
+			ProcessUID:      enrichedInfo.ProcessUID,
+			PID:             enrichedInfo.PID,
+			DetectionSource: "process_creation",
 		}
 
 		// Submit non-blocking
@@ -739,10 +738,33 @@ func initializeProcessCache() {
 		if info != nil && info.ExePath != "" {
 			// Set Comm from ExePath basename, just like in EnrichProcessEvent
 			info.Comm = filepath.Base(info.ExePath)
+
+			// Calculate binary hash if enabled
+			if globalEngine != nil && globalEngine.config.HashBinaries {
+				if hash, err := CalculateMD5(info.ExePath); err == nil {
+					info.BinaryHash = hash
+					if globalLogger != nil {
+						globalLogger.Debug("process", "Calculated MD5 hash for %s: %s",
+							info.ExePath, info.BinaryHash)
+					}
+				} else {
+					if globalLogger != nil {
+						globalLogger.Debug("process", "Failed to calculate MD5 hash for %s: %v",
+							info.ExePath, err)
+					}
+				}
+			}
+
 			AddOrUpdateProcessCache(uint32(pid), info)
 			cachedCount++
 			if globalLogger != nil {
-				globalLogger.Debug("process", "Cached PID %d: %s (%s)", pid, info.Comm, info.ExePath)
+				if info.BinaryHash != "" {
+					globalLogger.Debug("process", "Cached PID %d: %s (%s) [%s]",
+						pid, info.Comm, info.ExePath, info.BinaryHash)
+				} else {
+					globalLogger.Debug("process", "Cached PID %d: %s (%s)",
+						pid, info.Comm, info.ExePath)
+				}
 			}
 		}
 	}
