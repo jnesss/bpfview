@@ -29,6 +29,7 @@ type ecsEvent struct {
 	Timestamp string `json:"@timestamp"`
 	Version   string `json:"ecs.version"`    // ECS version
 	Type      string `json:"event.type"`     // e.g., process, network, dns
+	Subtype   string `json:"event.subtype"`  // e.g., dns_query, network_connection
 	Category  string `json:"event.category"` // e.g., process, network
 	Kind      string `json:"event.kind"`     // e.g., event, alert, metric
 	Dataset   string `json:"event.dataset"`  // Source of the event (bpfview)
@@ -38,52 +39,59 @@ type ecsEvent struct {
 	Message   string `json:"message,omitempty"`
 
 	// Host information
-	HostName    string `json:"host.name,omitempty"`
-	HostIP      string `json:"host.ip,omitempty"`
-	HostOS      string `json:"host.os.type"`
-	HostKernel  string `json:"host.os.kernel"`
-	HostVersion string `json:"host.os.version,omitempty"`
+	HostName   string `json:"host.name,omitempty"`
+	HostIP     string `json:"host.ip,omitempty"`
+	HostOS     string `json:"host.os.type"`
+	HostKernel string `json:"host.os.kernel"`
 
 	// Process information
-	ProcessName     string   `json:"process.name,omitempty"`
-	ProcessPID      int64    `json:"process.pid,omitempty"`
-	ProcessTID      int64    `json:"process.thread.id,omitempty"`
-	ProcessArgs     []string `json:"process.args,omitempty"`
-	ProcessCwd      string   `json:"process.working_directory,omitempty"`
-	ProcessExe      string   `json:"process.executable,omitempty"`
-	ProcessHash     string   `json:"process.hash.md5,omitempty"`
-	ProcessCommand  string   `json:"process.command_line,omitempty"`
-	ProcessEnv      []string `json:"process.env,omitempty"`
-	ProcessStart    string   `json:"process.start,omitempty"`
-	ProcessEnd      string   `json:"process.end,omitempty"`
-	ProcessExitCode int64    `json:"process.exit_code,omitempty"`
-	ExitDescription string   `json:"process.exit_description,omitempty"`
-	ProcessDuration string   `json:"process.duration,omitempty"`
+	ProcessName             string   `json:"process.name,omitempty"`
+	ProcessPID              int64    `json:"process.pid,omitempty"`
+	ProcessExecutable       string   `json:"process.executable,omitempty"`
+	ProcessCommandLine      string   `json:"process.command_line,omitempty"`
+	ProcessWorkingDirectory string   `json:"process.working_directory,omitempty"`
+	ProcessHashMD5          string   `json:"process.hash.md5,omitempty"`
+	ProcessEnv              []string `json:"process.env,omitempty"`
+	ProcessStart            string   `json:"process.start,omitempty"`
+	ProcessEnd              string   `json:"process.end,omitempty"`
+	ProcessExitCode         int64    `json:"process.exit_code,omitempty"`
+	ProcessExitDescription  string   `json:"process.exit_description,omitempty"`
+	ProcessDuration         string   `json:"process.duration,omitempty"`
 
 	// Parent process
-	ParentProcessName string `json:"process.parent.name,omitempty"`
-	ParentProcessPID  int64  `json:"process.parent.pid,omitempty"`
+	ParentProcessName        string `json:"process.parent.name,omitempty"`
+	ParentProcessPID         int64  `json:"process.parent.pid,omitempty"`
+	ParentProcessExecutable  string `json:"process.parent.executable,omitempty"`
+	ParentProcessCommandLine string `json:"process.parent.command_line,omitempty"`
+	ParentProcessHashMD5     string `json:"process.parent.hash.md5,omitempty"`
+	ParentProcessStart       string `json:"process.parent.start,omitempty"`
 
 	// User information
 	UserID   string `json:"user.id,omitempty"`
 	UserName string `json:"user.name,omitempty"`
 	GroupID  string `json:"user.group.id,omitempty"`
 
+	// User information
+	ParentUserID   string `json:"user.parent.id,omitempty"`
+	ParentUserName string `json:"user.parent.name,omitempty"`
+	ParentGroupID  string `json:"user.parent.group.id,omitempty"`
+
 	// Container information
 	ContainerID string `json:"container.id,omitempty"`
 
 	// Network information
-	NetworkType      string `json:"network.type,omitempty"`
-	NetworkProtocol  string `json:"network.protocol,omitempty"`
-	NetworkBytes     int64  `json:"network.bytes,omitempty"`
-	NetworkDirection string `json:"network.direction,omitempty"`
-	DirectionDesc    string `json:"network.direction_description,omitempty"`
+	NetworkType          string `json:"network.type,omitempty"`
+	NetworkProtocol      string `json:"network.protocol,omitempty"`
+	NetworkBytes         int64  `json:"network.bytes,omitempty"`
+	NetworkDirection     string `json:"network.direction,omitempty"`
+	NetworkDirectionDesc string `json:"network.direction_description,omitempty"`
 
 	// Source/Destination
-	SourceIP        string `json:"source.ip,omitempty"`
-	SourcePort      int64  `json:"source.port,omitempty"`
-	DestinationIP   string `json:"destination.ip,omitempty"`
-	DestinationPort int64  `json:"destination.port,omitempty"`
+	SourceIP          string `json:"source.ip,omitempty"`
+	SourcePort        int64  `json:"source.port,omitempty"`
+	DestinationIP     string `json:"destination.ip,omitempty"`
+	DestinationPort   int64  `json:"destination.port,omitempty"`
+	DestinationDomain string `json:"destination.domain,omitempty"`
 
 	// DNS specific fields
 	DNSType         string   `json:"dns.type,omitempty"`
@@ -102,19 +110,17 @@ type ecsEvent struct {
 	TLSClientJa4Hash   string   `json:"tls.client.ja4_hash,omitempty"`
 	TLSClientSupported []string `json:"tls.client.supported_ciphers,omitempty"`
 
-	// Rule information (following ECS rule.* naming)
-	RuleID          string   `json:"rule.id,omitempty"`
-	RuleName        string   `json:"rule.name,omitempty"`
-	RuleDescription string   `json:"rule.description,omitempty"`
-	RuleLevel       string   `json:"rule.level,omitempty"`
-	RuleReferences  []string `json:"rule.reference,omitempty"`
-	RuleTags        []string `json:"rule.tags,omitempty"`
-
-	// Detection details
-	DetectionDetails string                 `json:"rule.matched_details,omitempty"`
+	// Rule information
+	RuleID           string                 `json:"rule.id,omitempty"`
+	RuleName         string                 `json:"rule.name,omitempty"`
+	RuleDescription  string                 `json:"rule.description,omitempty"`
+	RuleLevel        string                 `json:"rule.level,omitempty"`
+	RuleReference    []string               `json:"rule.reference,omitempty"`
+	RuleTags         []string               `json:"rule.tags,omitempty"`
+	RuleMatchDetails string                 `json:"rule.matched_details,omitempty"`
 	DetectionFields  map[string]interface{} `json:"rule.matched_fields,omitempty"`
 
-	// Custom fields for correlation
+	// Correlation IDs
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
@@ -139,7 +145,7 @@ func (f *ECSFormatter) Close() error {
 	return nil
 }
 
-func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
+func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error {
 	ecsEvent := f.createBaseEvent()
 	ecsEvent.Type = "process"
 	ecsEvent.Category = "process"
@@ -159,17 +165,12 @@ func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.Proc
 	// Process information
 	ecsEvent.ProcessName = info.Comm
 	ecsEvent.ProcessPID = int64(info.PID)
-	ecsEvent.ProcessExe = info.ExePath
-	ecsEvent.ProcessCwd = info.WorkingDir
-	ecsEvent.ProcessHash = info.BinaryHash
-	ecsEvent.ProcessCommand = info.CmdLine
+	ecsEvent.ProcessExecutable = info.ExePath
+	ecsEvent.ProcessCommandLine = info.CmdLine
+	ecsEvent.ProcessWorkingDirectory = info.WorkingDir
+	ecsEvent.ProcessHashMD5 = info.BinaryHash
 
-	// Split command line into args if present
-	if info.CmdLine != "" {
-		ecsEvent.ProcessArgs = strings.Fields(info.CmdLine)
-	}
-
-	// Parent process
+	// Parent process (using what's in the event)
 	ecsEvent.ParentProcessPID = int64(info.PPID)
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 	ecsEvent.ParentProcessName = parentComm
@@ -178,6 +179,21 @@ func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.Proc
 	ecsEvent.UserID = fmt.Sprintf("%d", info.UID)
 	ecsEvent.UserName = info.Username
 	ecsEvent.GroupID = fmt.Sprintf("%d", info.GID)
+
+	// Parent process details if available
+	if parentinfo != nil {
+		ecsEvent.ParentProcessExecutable = parentinfo.ExePath
+		ecsEvent.ParentProcessCommandLine = parentinfo.CmdLine
+		ecsEvent.ParentProcessHashMD5 = parentinfo.BinaryHash
+		if !parentinfo.StartTime.IsZero() {
+			ecsEvent.ParentProcessStart = parentinfo.StartTime.UTC().Format(time.RFC3339Nano)
+		}
+
+		// User information
+		ecsEvent.ParentUserID = fmt.Sprintf("%d", parentinfo.UID)
+		ecsEvent.ParentUserName = parentinfo.Username
+		ecsEvent.ParentGroupID = fmt.Sprintf("%d", parentinfo.GID)
+	}
 
 	// Container ID if available
 	if info.ContainerID != "" && info.ContainerID != "-" {
@@ -192,20 +208,20 @@ func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.Proc
 		ecsEvent.ProcessEnd = info.ExitTime.UTC().Format(time.RFC3339Nano)
 		ecsEvent.ProcessExitCode = int64(info.ExitCode)
 
-		// Add exit code description for common codes
+		// Add exit code description
 		switch info.ExitCode {
 		case 0:
-			ecsEvent.ExitDescription = "Success"
+			ecsEvent.ProcessExitDescription = "Success"
 		case 1:
-			ecsEvent.ExitDescription = "General error"
+			ecsEvent.ProcessExitDescription = "General error"
 		case 126:
-			ecsEvent.ExitDescription = "Command not executable"
+			ecsEvent.ProcessExitDescription = "Command not executable"
 		case 127:
-			ecsEvent.ExitDescription = "Command not found"
+			ecsEvent.ProcessExitDescription = "Command not found"
 		case 130:
-			ecsEvent.ExitDescription = "Terminated by Ctrl+C"
+			ecsEvent.ProcessExitDescription = "Terminated by Ctrl+C"
 		case 255:
-			ecsEvent.ExitDescription = "Exit status out of range or SSH closed"
+			ecsEvent.ProcessExitDescription = "Exit status out of range or SSH closed"
 		}
 
 		if !info.StartTime.IsZero() {
@@ -213,10 +229,10 @@ func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.Proc
 		}
 	}
 
-	// Add correlation IDs in labels
+	// Correlation IDs
 	ecsEvent.Labels = map[string]string{
 		"session_uid": f.sessionUID,
-		"process_uid": generateProcessUID(info),
+		"process_uid": info.ProcessUID,
 	}
 
 	return f.encoder.Encode(ecsEvent)
@@ -235,10 +251,10 @@ func (f *ECSFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Proc
 	ecsEvent.NetworkBytes = int64(event.BytesCount)
 	if event.Direction == types.FLOW_INGRESS {
 		ecsEvent.NetworkDirection = "ingress"
-		ecsEvent.DirectionDesc = "Incoming traffic from external host"
+		ecsEvent.NetworkDirectionDesc = "Incoming traffic from external host"
 	} else {
 		ecsEvent.NetworkDirection = "egress"
-		ecsEvent.DirectionDesc = "Outgoing traffic to external service"
+		ecsEvent.NetworkDirectionDesc = "Outgoing traffic to external service"
 	}
 
 	// Source and destination
@@ -247,22 +263,32 @@ func (f *ECSFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Proc
 	ecsEvent.DestinationIP = ipToString(event.DstIP)
 	ecsEvent.DestinationPort = int64(event.DstPort)
 
-	// Process information
+	// Process information (from event and provided info)
 	ecsEvent.ProcessName = string(bytes.TrimRight(event.Comm[:], "\x00"))
 	ecsEvent.ProcessPID = int64(event.Pid)
 	ecsEvent.ParentProcessName = string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 	ecsEvent.ParentProcessPID = int64(event.Ppid)
+
+	// Additional process info if provided
+	if info != nil {
+		ecsEvent.ProcessExecutable = info.ExePath
+		ecsEvent.ProcessCommandLine = info.CmdLine
+		ecsEvent.ProcessWorkingDirectory = info.WorkingDir
+		ecsEvent.ProcessHashMD5 = info.BinaryHash
+		ecsEvent.UserName = info.Username
+		ecsEvent.ContainerID = info.ContainerID
+	}
 
 	ecsEvent.Message = fmt.Sprintf("Network connection: %s:%d → %s:%d (%s)",
 		ecsEvent.SourceIP, ecsEvent.SourcePort,
 		ecsEvent.DestinationIP, ecsEvent.DestinationPort,
 		ecsEvent.NetworkProtocol)
 
-	// Add correlation IDs in labels
+	// Correlation IDs
 	ecsEvent.Labels = map[string]string{
 		"session_uid": f.sessionUID,
-		"process_uid": generateProcessUID(info),
-		"network_uid": generateConnID(event.Pid, event.Ppid,
+		"process_uid": info.ProcessUID,
+		"network_uid": GenerateConnID(event.Pid, event.Ppid,
 			uint32ToNetIP(event.SrcIP),
 			uint32ToNetIP(event.DstIP),
 			event.SrcPort, event.DstPort),
@@ -336,8 +362,8 @@ func (f *ECSFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pro
 	// Add correlation IDs in labels
 	ecsEvent.Labels = map[string]string{
 		"session_uid":     f.sessionUID,
-		"process_uid":     generateProcessUID(info),
-		"network_uid":     generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
+		"process_uid":     info.ProcessUID,
+		"network_uid":     GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
 		"conversation_id": event.ConversationID,
 	}
 
@@ -390,8 +416,8 @@ func (f *ECSFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pro
 	// Add correlation IDs in labels
 	ecsEvent.Labels = map[string]string{
 		"session_uid": f.sessionUID,
-		"process_uid": generateProcessUID(info),
-		"network_uid": generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
+		"process_uid": info.ProcessUID,
+		"network_uid": GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
 	}
 
 	return f.encoder.Encode(ecsEvent)
@@ -412,53 +438,138 @@ func (f *ECSFormatter) createBaseEvent() ecsEvent {
 
 func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	ecsEvent := f.createBaseEvent()
-	ecsEvent.Type = "sigma"
-	ecsEvent.Category = "detection"
+
+	// Event classification
 	ecsEvent.Kind = "alert"
+	ecsEvent.Type = "sigma"
+	ecsEvent.Subtype = match.DetectionSource // "process_creation", "dns_query", "network_connection"
+	ecsEvent.Action = "detection"
 	ecsEvent.Outcome = "success"
 
-	// Add rule information
+	// Set event category based on detection source, matching JSON formatter approach
+	switch match.DetectionSource {
+	case "process_creation":
+		ecsEvent.Category = "process"
+	case "network_connection", "dns_query":
+		ecsEvent.Category = "network"
+	}
+
+	// Process information
+	if match.ProcessInfo != nil {
+		ecsEvent.ProcessName = match.ProcessInfo.Comm
+		ecsEvent.ProcessPID = int64(match.ProcessInfo.PID)
+		ecsEvent.ProcessExecutable = match.ProcessInfo.ExePath
+		ecsEvent.ProcessCommandLine = match.ProcessInfo.CmdLine
+		ecsEvent.ProcessWorkingDirectory = match.ProcessInfo.WorkingDir
+		ecsEvent.ProcessHashMD5 = match.ProcessInfo.BinaryHash
+		ecsEvent.ProcessEnv = match.ProcessInfo.Environment
+		ecsEvent.UserName = match.ProcessInfo.Username
+		ecsEvent.UserID = fmt.Sprintf("%d", match.ProcessInfo.UID)
+		ecsEvent.GroupID = fmt.Sprintf("%d", match.ProcessInfo.GID)
+		ecsEvent.ContainerID = match.ProcessInfo.ContainerID
+
+		// Process timing
+		if !match.ProcessInfo.StartTime.IsZero() {
+			ecsEvent.ProcessStart = match.ProcessInfo.StartTime.UTC().Format(time.RFC3339Nano)
+		}
+		if !match.ProcessInfo.ExitTime.IsZero() {
+			ecsEvent.ProcessEnd = match.ProcessInfo.ExitTime.UTC().Format(time.RFC3339Nano)
+			ecsEvent.ProcessExitCode = int64(match.ProcessInfo.ExitCode)
+			if !match.ProcessInfo.StartTime.IsZero() {
+				ecsEvent.ProcessDuration = match.ProcessInfo.ExitTime.Sub(match.ProcessInfo.StartTime).String()
+			}
+		}
+	}
+
+	// Parent process details
+	if match.ParentInfo != nil {
+		ecsEvent.ParentProcessName = match.ParentInfo.Comm
+		ecsEvent.ParentProcessPID = int64(match.ParentInfo.PID)
+		ecsEvent.ParentProcessExecutable = match.ParentInfo.ExePath
+		ecsEvent.ParentProcessCommandLine = match.ParentInfo.CmdLine
+		ecsEvent.ParentProcessHashMD5 = match.ParentInfo.BinaryHash
+
+		// Add start time if available
+		if !match.ParentInfo.StartTime.IsZero() {
+			ecsEvent.ParentProcessStart = match.ParentInfo.StartTime.UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	// Network details for network-based detections
+	if match.DetectionSource == "dns_query" || match.DetectionSource == "network_connection" {
+		// Core network fields
+		ecsEvent.NetworkType = "ipv4"
+
+		// Populate fields from EventData map
+		if srcIP, ok := match.EventData["SourceIp"].(string); ok {
+			ecsEvent.SourceIP = srcIP
+		}
+		if srcPort, ok := match.EventData["SourcePort"].(uint16); ok {
+			ecsEvent.SourcePort = int64(srcPort)
+		}
+		if dstIP, ok := match.EventData["DestinationIp"].(string); ok {
+			ecsEvent.DestinationIP = dstIP
+		}
+		if dstPort, ok := match.EventData["DestinationPort"].(uint16); ok {
+			ecsEvent.DestinationPort = int64(dstPort)
+		}
+		if protocol, ok := match.EventData["Protocol"].(string); ok {
+			ecsEvent.NetworkProtocol = strings.ToLower(protocol)
+		}
+		if direction, ok := match.EventData["Direction"].(string); ok {
+			ecsEvent.NetworkDirection = direction
+			// Add direction description like in JSON formatter
+			if direction == "ingress" {
+				ecsEvent.NetworkDirectionDesc = "Incoming traffic from external host"
+			} else if direction == "egress" {
+				ecsEvent.NetworkDirectionDesc = "Outgoing traffic to external service"
+			}
+		}
+
+		// DNS-specific fields
+		if hostname, ok := match.EventData["DestinationHostname"].(string); ok {
+			ecsEvent.DestinationDomain = hostname
+		}
+	}
+
+	// Rule information
 	ecsEvent.RuleID = match.RuleID
 	ecsEvent.RuleName = match.RuleName
 	ecsEvent.RuleDescription = match.RuleDescription
 	ecsEvent.RuleLevel = match.RuleLevel
-	ecsEvent.RuleReferences = match.RuleReferences
+	ecsEvent.RuleReference = match.RuleReferences
 	ecsEvent.RuleTags = match.RuleTags
 
-	// Add detection details
+	// Detection details
 	if details, ok := match.MatchedFields["details"].(string); ok {
-		ecsEvent.DetectionDetails = details
+		ecsEvent.RuleMatchDetails = details
 	}
 	ecsEvent.DetectionFields = match.MatchedFields
 
-	// Add process context
-	ecsEvent.ProcessPID = int64(match.PID)
-	if match.ProcessInfo != nil {
-		ecsEvent.ProcessName = match.ProcessInfo.Comm
-		ecsEvent.ProcessCwd = match.ProcessInfo.WorkingDir
-		ecsEvent.ProcessCommand = match.ProcessInfo.CmdLine
-
-		if match.ProcessInfo.Username != "" {
-			ecsEvent.UserName = match.ProcessInfo.Username
-		}
-		if match.ProcessInfo.PPID > 0 {
-			ecsEvent.ParentProcessPID = int64(match.ProcessInfo.PPID)
-		}
-	}
-
-	// Create descriptive message
-	ecsEvent.Message = fmt.Sprintf("Sigma rule match: %s (Level: %s)",
-		match.RuleName, match.RuleLevel)
-	if match.ProcessInfo != nil {
-		ecsEvent.Message += fmt.Sprintf(" - Process: %s [%d]",
-			match.ProcessInfo.Comm, match.PID)
-	}
-
-	// Add correlation IDs in labels
+	// Correlation IDs
 	ecsEvent.Labels = map[string]string{
 		"session_uid": f.sessionUID,
 		"process_uid": match.ProcessUID,
 	}
 
+	if match.NetworkUID != "" {
+		ecsEvent.Labels["network_uid"] = match.NetworkUID
+	}
+
+	if match.DetectionSource == "dns_query" {
+		if conversationID, ok := match.EventData["conversation_id"].(string); ok {
+			ecsEvent.Labels["dns_conversation_uid"] = conversationID
+		}
+	}
+
+	// Message formatting
+	ecsEvent.Message = fmt.Sprintf("Sigma rule match: %s (Level: %s)",
+		match.RuleName, match.RuleLevel)
+	if match.ProcessInfo != nil {
+		ecsEvent.Message += fmt.Sprintf(" - Process: %s [%d]",
+			match.ProcessInfo.Comm, match.ProcessInfo.PID)
+	}
+
 	return f.encoder.Encode(ecsEvent)
 }
+
