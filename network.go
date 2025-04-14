@@ -104,13 +104,13 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 
 		// Map fields for Sigma detection
 		sigmaEvent := map[string]interface{}{
-			"ProcessId":   event.Pid,
-			"ProcessName": string(bytes.TrimRight(event.Comm[:], "\x00")),
-			"Image":       processInfo.ExePath,
-			"CommandLine": processInfo.CmdLine,
-			"DestPort":    event.DstPort,
-			"DestIP":      ipToString(event.DstIP),
-			"Initiated":   event.Direction == types.FLOW_EGRESS,
+			"ProcessId":       event.Pid,
+			"ProcessName":     string(bytes.TrimRight(event.Comm[:], "\x00")),
+			"Image":           processInfo.ExePath,
+			"CommandLine":     processInfo.CmdLine,
+			"DestinationPort": event.DstPort,
+			"DestinationIp":   ipToString(event.DstIP),
+			"Initiated":       event.Direction == types.FLOW_EGRESS,
 		}
 
 		// Create detection event
