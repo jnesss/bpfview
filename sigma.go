@@ -21,11 +21,12 @@ import (
 )
 
 type DetectionEvent struct {
-	EventType  string
-	Data       map[string]interface{}
-	Timestamp  time.Time
-	ProcessUID string // Just store process identifier
-	PID        uint32 // Keep PID for potential cache lookup
+	EventType       string
+	Data            map[string]interface{}
+	Timestamp       time.Time
+	ProcessUID      string // Just store process identifier
+	PID             uint32 // Keep PID for potential cache lookup
+	DetectionSource string
 }
 
 type SigmaEngine struct {
@@ -356,10 +357,31 @@ func isProcessCreationRule(rule sigma.Rule) bool {
 	return false
 }
 
+func isNetworkRule(rule sigma.Rule) bool {
+	if rule.Logsource.Product == "windows" {
+		return false
+	}
+
+	// Check for network_connection category
+	if rule.Logsource.Category == "network_connection" {
+		return true
+	}
+
+	// Check Linux product with network context
+	if rule.Logsource.Product == "linux" {
+		return strings.Contains(strings.ToLower(rule.Description), "network") ||
+			strings.Contains(strings.ToLower(rule.Description), "connection") ||
+			strings.Contains(strings.ToLower(rule.Description), "dns")
+	}
+
+	return false
+}
+
 func createFieldMappings() sigma.Config {
 	return sigma.Config{
-		Title: "BPFView Process Creation Mappings",
+		Title: "BPFView Process and Network Mappings",
 		FieldMappings: map[string]sigma.FieldMapping{
+			// Process fields
 			"CommandLine":       {TargetNames: []string{"CommandLine"}},
 			"ParentCommandLine": {TargetNames: []string{"ParentCommandLine"}},
 			"Image":             {TargetNames: []string{"Image"}},
@@ -367,6 +389,12 @@ func createFieldMappings() sigma.Config {
 			"User":              {TargetNames: []string{"Username"}},
 			"ProcessId":         {TargetNames: []string{"ProcessId"}},
 			"ParentProcessId":   {TargetNames: []string{"ParentProcessId"}},
+
+			// Network fields
+			"DestinationPort":     {TargetNames: []string{"DestPort"}},
+			"DestinationHostname": {TargetNames: []string{"DestHostname"}},
+			"DestinationIp":       {TargetNames: []string{"DestIP"}},
+			"Initiated":           {TargetNames: []string{"Initiated"}},
 		},
 	}
 }
