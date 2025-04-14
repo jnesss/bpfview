@@ -292,7 +292,7 @@ BPFView supports real-time Sigma rule detection:
 
 ```bash
 # Enable Sigma detection with default rules directory
-sudo bpfview --sigma-rules ./rules
+sudo bpfview --sigma ./sigma
 
 # Customize detection queue size
 sudo bpfview --sigma-rules ./rules --sigma-queue-size 20000
