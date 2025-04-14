@@ -115,8 +115,8 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	}
 
 	// Debug log for event details
-	globalLogger.Debug("process", "Processing EXEC event for PID %d\n", event.Pid)
-	globalLogger.Debug("process", "BPF data - Comm: %s, UID: %d, GID: %d\n",
+	globalLogger.Trace("process", "Processing EXEC event for PID %d\n", event.Pid)
+	globalLogger.Trace("process", "BPF data - Comm: %s, UID: %d, GID: %d\n",
 		string(bytes.TrimRight(event.Comm[:], "\x00")),
 		event.Uid,
 		event.Gid)
@@ -180,10 +180,10 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 
 func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	// Debug log for event details
-	globalLogger.Debug("process", "Processing EXEC event for PID %d\n", event.Pid)
+	globalLogger.Trace("process", "Processing EXEC event for PID %d\n", event.Pid)
 
 	// Log raw BPF data
-	globalLogger.Debug("process", "BPF data - Comm: %s, Parent: %s, UID: %d, GID: %d\n",
+	globalLogger.Trace("process", "BPF data - Comm: %s, Parent: %s, UID: %d, GID: %d\n",
 		string(bytes.TrimRight(event.Comm[:], "\x00")),
 		string(bytes.TrimRight(event.ParentComm[:], "\x00")),
 		event.Uid,
@@ -193,10 +193,10 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	var kernelCmdLine string
 	if bpfObjs != nil {
 		if cmdline, err := LookupCmdline(bpfObjs, event.Pid); err == nil {
-			globalLogger.Debug("process", "Phase 1 - Got cmdline from BPF for PID %d: %s\n", event.Pid, cmdline)
+			globalLogger.Trace("process", "Phase 1 - Got cmdline from BPF for PID %d: %s\n", event.Pid, cmdline)
 			kernelCmdLine = cmdline
 		} else {
-			globalLogger.Debug("process", "Phase 1 - Failed to get cmdline from BPF for PID %d: %v\n", event.Pid, err)
+			globalLogger.Trace("process", "Phase 1 - Failed to get cmdline from BPF for PID %d: %v\n", event.Pid, err)
 		}
 	}
 
@@ -362,24 +362,24 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 
 	// Check if process still exists
 	if _, err := os.Stat(procDir); os.IsNotExist(err) {
-		globalLogger.Debug("process", "PID %d - /proc entry doesn't exist\n", pid)
+		globalLogger.Trace("process", "PID %d - /proc entry doesn't exist\n", pid)
 		return info
 	}
 
 	// Get executable path
 	if exePath, err := os.Readlink(fmt.Sprintf("%s/exe", procDir)); err == nil {
-		globalLogger.Debug("process", "PID %d - Got exe path from /proc: %s\n", pid, exePath)
+		globalLogger.Trace("process", "PID %d - Got exe path from /proc: %s\n", pid, exePath)
 		info.ExePath = exePath
 	} else {
-		globalLogger.Debug("process", "PID %d - Failed to read exe path from /proc: %v\n", pid, err)
+		globalLogger.Trace("process", "PID %d - Failed to read exe path from /proc: %v\n", pid, err)
 	}
 
 	// Get command line with proper null-byte handling
 	if cmdlineBytes, err := os.ReadFile(fmt.Sprintf("%s/cmdline", procDir)); err == nil && len(cmdlineBytes) > 0 {
 		if len(cmdlineBytes) == 0 {
-			globalLogger.Debug("process", "PID %d - /proc cmdline file was empty\n", pid)
+			globalLogger.Trace("process", "PID %d - /proc cmdline file was empty\n", pid)
 		} else if cmdlineBytes[0] == 0 {
-			globalLogger.Debug("process", "PID %d - /proc cmdline starts with null byte\n", pid)
+			globalLogger.Trace("process", "PID %d - /proc cmdline starts with null byte\n", pid)
 		} else {
 
 			args := bytes.Split(cmdlineBytes, []byte{0})
@@ -391,19 +391,19 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 			}
 			if len(cmdArgs) > 0 {
 				info.CmdLine = strings.Join(cmdArgs, " ")
-				globalLogger.Debug("process", "PID %d - Got cmdline from /proc: %s\n", pid, info.CmdLine)
+				globalLogger.Trace("process", "PID %d - Got cmdline from /proc: %s\n", pid, info.CmdLine)
 			}
 		}
 	} else {
-		globalLogger.Debug("process", "PID %d - Failed to read cmdline from /proc: %v\n", pid, err)
+		globalLogger.Trace("process", "PID %d - Failed to read cmdline from /proc: %v\n", pid, err)
 	}
 
 	// Get initial working directory
 	if cwd, err := os.Readlink(fmt.Sprintf("%s/cwd", procDir)); err == nil {
-		globalLogger.Debug("process", "PID %d - Got working dir from /proc: %s\n", pid, cwd)
+		globalLogger.Trace("process", "PID %d - Got working dir from /proc: %s\n", pid, cwd)
 		info.WorkingDir = cwd
 	} else {
-		globalLogger.Debug("process", "PID %d - Failed to read working dir from /proc: %v\n", pid, err)
+		globalLogger.Trace("process", "PID %d - Failed to read working dir from /proc: %v\n", pid, err)
 	}
 
 	// Get environment variables
@@ -435,7 +435,7 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 				}
 			}
 		} else {
-			globalLogger.Debug("process", "PID %d - Failed to read cgroup info: %v\n", pid, err)
+			globalLogger.Trace("process", "PID %d - Failed to read cgroup info: %v\n", pid, err)
 		}
 	}
 
@@ -511,7 +511,7 @@ func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.
 
 		info.Username = GetUsernameFromUID(info.UID)
 
-		globalLogger.Debug("process", "%d: BPF kernel data: [%v] [%v]\n", pid, info.CmdLine, info.ExePath)
+		globalLogger.Trace("process", "%d: BPF kernel data: [%v] [%v]\n", pid, info.CmdLine, info.ExePath)
 
 		// Phase 2: First proc check
 
@@ -522,21 +522,21 @@ func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.
 			if info.ExePath == "" {
 				// anything is better than nothing
 				info.ExePath = firstProcInfo.ExePath
-				globalLogger.Debug("process", "%d: Replacing blank BPF ExePath with /proc ExePath: [%v]\n", pid, info.ExePath)
+				globalLogger.Trace("process", "%d: Replacing blank BPF ExePath with /proc ExePath: [%v]\n", pid, info.ExePath)
 			} else if info.ExePath == firstProcInfo.ExePath {
-				globalLogger.Debug("process", "%d: BPF and /proc ExePath both same: [%v]\n", pid, info.ExePath)
+				globalLogger.Trace("process", "%d: BPF and /proc ExePath both same: [%v]\n", pid, info.ExePath)
 				exe_path_match = true
 			} else if (len(info.ExePath) > 60) && (len(firstProcInfo.ExePath) > len(info.ExePath)) {
 				// BPF ExePath is max 64 bytes so it could get truncated
 				// Dont even consider /proc exepath unless there's a chance BPF exepath was truncated
 				if strings.HasPrefix(firstProcInfo.ExePath, info.ExePath[:60]) {
-					globalLogger.Debug("process", "%d: Replacing truncated BPF ExePath with /proc ExePath: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
+					globalLogger.Trace("process", "%d: Replacing truncated BPF ExePath with /proc ExePath: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
 					info.ExePath = firstProcInfo.ExePath
 				} else {
-					globalLogger.Debug("process", "%d: BPF ExePath does not share common prefix with /proc ExePath, trusting BPF: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
+					globalLogger.Trace("process", "%d: BPF ExePath does not share common prefix with /proc ExePath, trusting BPF: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
 				}
 			} else {
-				globalLogger.Debug("process", "%d: Trusting BPF ExePath over /proc ExePath: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
+				globalLogger.Trace("process", "%d: Trusting BPF ExePath over /proc ExePath: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
 			}
 		}
 
@@ -544,28 +544,28 @@ func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.
 			if info.CmdLine == "" {
 				// anything is better than nothing
 				info.CmdLine = firstProcInfo.CmdLine
-				globalLogger.Debug("process", "%d: Replacing BLANK BPF CmdLine with /proc CmdLine: [%v]\n", pid, info.CmdLine)
+				globalLogger.Trace("process", "%d: Replacing BLANK BPF CmdLine with /proc CmdLine: [%v]\n", pid, info.CmdLine)
 			} else if info.CmdLine == firstProcInfo.CmdLine {
-				globalLogger.Debug("process", "%d: BPF and /proc CmdLine both same: [%v]\n", pid, info.CmdLine)
+				globalLogger.Trace("process", "%d: BPF and /proc CmdLine both same: [%v]\n", pid, info.CmdLine)
 				cmd_line_match = true
 			} else if len(firstProcInfo.CmdLine) > len(info.CmdLine) {
 				// BPF CmdLine is VERY limited and each arg could be truncated
 				if len(info.CmdLine) > 15 && strings.HasPrefix(firstProcInfo.CmdLine, info.CmdLine[:15]) {
 					// example:
 					// DEBUG 2 2835509: Replacing truncated BPF CmdLine with /proc CmdLine: [curl -s --max-time] [curl -s --max-time 5 -H X-aws-ec2-metadata-token:AQAEAAN_7UhbnrPmG1anTPFbytQG7zQEe171jxkYvdZsVrw8CrT3cQ== -f http://169.254.169.254/latest/meta-data/mac]
-					globalLogger.Debug("process", "%d: Replacing truncated BPF CmdLine with /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
+					globalLogger.Trace("process", "%d: Replacing truncated BPF CmdLine with /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
 					info.CmdLine = firstProcInfo.CmdLine
 				} else if strings.Contains(firstProcInfo.CmdLine, info.CmdLine) {
 					// example:
 					// DEBUG 2 2835803: Replacing partial BPF CmdLine with /proc CmdLine: [/usr/bin/setup-policy-routes ens5 refresh] [/usr/bin/bash /usr/bin/setup-policy-routes ens5 refresh]
 
-					globalLogger.Debug("process", "%d: Replacing partial BPF CmdLine with /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
+					globalLogger.Trace("process", "%d: Replacing partial BPF CmdLine with /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
 					info.CmdLine = firstProcInfo.CmdLine
 				} else {
-					globalLogger.Debug("process", "%d: BPF CmdLine does not share common prefix with /proc CmdLine, trusting BPF: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
+					globalLogger.Trace("process", "%d: BPF CmdLine does not share common prefix with /proc CmdLine, trusting BPF: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
 				}
 			} else {
-				globalLogger.Debug("process", "%d: BPF CmdLine is longer than /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
+				globalLogger.Trace("process", "%d: BPF CmdLine is longer than /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
 			}
 		}
 
@@ -585,11 +585,11 @@ func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.
 				// ignore
 			} else if info.ExePath != kernelExePath {
 				// trust secondProcInfo ExePath more than firstProcInfo
-				globalLogger.Debug("process", "%d: Replacing first /proc ExePath: [%v] [%v]\n", pid, info.ExePath, secondProcInfo.ExePath)
+				globalLogger.Trace("process", "%d: Replacing first /proc ExePath: [%v] [%v]\n", pid, info.ExePath, secondProcInfo.ExePath)
 				info.ExePath = secondProcInfo.ExePath
 			} else if (len(info.ExePath) > 60) && (len(secondProcInfo.ExePath) > len(info.ExePath)) {
 				// BPF ExePath might have been truncated..
-				globalLogger.Debug("process", "%d: Replacing BPF ExePath: [%v] [%v]\n", pid, info.ExePath, secondProcInfo.ExePath)
+				globalLogger.Trace("process", "%d: Replacing BPF ExePath: [%v] [%v]\n", pid, info.ExePath, secondProcInfo.ExePath)
 				info.ExePath = secondProcInfo.ExePath
 			} else {
 				// otherwise, use existing BPF exepath
@@ -603,7 +603,7 @@ func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.
 				// for now, lets try trusting the later /proc command line and evaluate
 				// example:
 				// DEBUG 3 2835418: Replacing CmdLine: [/usr/bin/sed -r -e] [/usr/bin/sed -r -e s/^[[:blank:]]*([[:upper:]_]+)=([[:print:][:digit:]\._-]+|"[[:print:][:digit:]\._-]+")/export \1=\2/;t;d /etc/locale.conf]
-				globalLogger.Debug("process", "%d: Replacing CmdLine: [%v] [%v]\n", pid, info.CmdLine, secondProcInfo.CmdLine)
+				globalLogger.Trace("process", "%d: Replacing CmdLine: [%v] [%v]\n", pid, info.CmdLine, secondProcInfo.CmdLine)
 				info.CmdLine = secondProcInfo.CmdLine
 			}
 		}
@@ -636,7 +636,6 @@ func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.
 			info.Comm = filepath.Base(info.ExePath)
 		}
 
-		globalLogger.Debug("process", "config: %v exe %v", globalEngine.config, info.ExePath)
 		// If hash binaries is enabled and we have an executable path, calculate hash
 		if globalEngine != nil && globalEngine.config.HashBinaries &&
 			info.ExePath != "" {
@@ -671,12 +670,12 @@ func LookupCmdline(bpfObjs *execveObjects, pid uint32) (string, error) {
 		Args [128]byte
 	}
 
-	globalLogger.Debug("process", "Attempting to lookup cmdline from BPF map for PID %d\n", pid)
+	globalLogger.Trace("process", "Attempting to lookup cmdline from BPF map for PID %d\n", pid)
 
 	// Try to lookup in the cmdlines map
 	err := bpfObjs.Cmdlines.Lookup(pid, &cmdLine)
 	if err != nil {
-		globalLogger.Debug("process", "Failed to lookup cmdline from BPF map for PID %d: %v\n", pid, err)
+		globalLogger.Trace("process", "Failed to lookup cmdline from BPF map for PID %d: %v\n", pid, err)
 		return "", fmt.Errorf("failed to lookup cmdline: %v", err)
 	}
 
@@ -690,9 +689,9 @@ func LookupCmdline(bpfObjs *execveObjects, pid uint32) (string, error) {
 	}
 
 	if len(cmdStr) > 0 {
-		globalLogger.Debug("process", "Successfully got cmdline from BPF map for PID %d: %s\n", pid, string(cmdStr))
+		globalLogger.Trace("process", "Successfully got cmdline from BPF map for PID %d: %s\n", pid, string(cmdStr))
 	} else {
-		globalLogger.Debug("process", "Got empty cmdline from BPF map for PID %d\n", pid)
+		globalLogger.Trace("process", "Got empty cmdline from BPF map for PID %d\n", pid)
 	}
 
 	return string(cmdStr), nil
