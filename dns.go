@@ -144,6 +144,44 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 		}
 	}
 
+	// Submit to Sigma detection if enabled
+	if globalSigmaEngine != nil {
+		// For DNS queries
+		if !userEvent.IsResponse {
+			// Get process info from cache
+			var processInfo *types.ProcessInfo
+			if info, exists := GetProcessFromCache(event.Pid); exists {
+				processInfo = info
+			} else {
+				processInfo = &types.ProcessInfo{}
+			}
+
+			for _, q := range userEvent.Questions {
+				// Map fields for Sigma detection
+				sigmaEvent := map[string]interface{}{
+					"ProcessId":    userEvent.Pid,
+					"ProcessName":  userEvent.Comm,
+					"DestHostname": q.Name,
+					"Initiated":    true,
+					"Image":        processInfo.ExePath, // from process info
+					"CommandLine":  processInfo.CmdLine, // from process info
+				}
+
+				// Create detection event
+				detectionEvent := DetectionEvent{
+					EventType:       "network_connection",
+					Data:            sigmaEvent,
+					Timestamp:       BpfTimestampToTime(event.Timestamp),
+					ProcessUID:      processInfo.ProcessUID,
+					PID:             event.Pid,
+					DetectionSource: "dns_query",
+				}
+
+				globalSigmaEngine.SubmitEvent(detectionEvent)
+			}
+		}
+	}
+
 	return nil
 }
 
