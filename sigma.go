@@ -145,6 +145,7 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 		if result.Match {
 
 			globalLogger.Debug("sigma", "Rule matched: %s", evaluator.Rule.Title)
+			globalLogger.Debug("sigma", "Event Data: %v", evt.Data)
 
 			// Convert SearchResults
 			matchDetails := getMatchDetails(evaluator.Rule, result.SearchResults)
@@ -167,19 +168,19 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 				DetectionSource: evt.DetectionSource,
 			}
 
-			// Try to get process info if available (we wont get it if handleEvent is post process Terminate)
+			// Try to get process info for matches
+			//  we wont get it if handleEvent is post process Terminate and thats ok
 			if info, exists := GetProcessFromCache(evt.PID); exists {
 				match.ProcessInfo = info
-				log.Printf("Rule match: %s (Process: %s [%d], Command: %s)",
-					evaluator.Rule.Title,
-					info.Comm,
-					evt.PID,
-					info.CmdLine)
-			} else {
-				log.Printf("Rule match: %s (ProcessUID: %s, PID: %d)",
-					evaluator.Rule.Title,
-					evt.ProcessUID,
-					evt.PID)
+				// Get parent info only if we have the process info
+				if pinfo, exists := GetProcessFromCache(info.PPID); exists {
+					match.ParentInfo = pinfo
+				}
+			}
+
+			// Add network correlation if available
+			if networkUID, ok := evt.Data["network_uid"].(string); ok {
+				match.NetworkUID = networkUID
 			}
 
 			// Write match directly to logger
@@ -434,8 +435,8 @@ func createFieldMappings() sigma.Config {
 		Title: "BPFView Process and Network Mappings",
 		FieldMappings: map[string]sigma.FieldMapping{
 			// Process fields
-			"CommandLine":       {TargetNames: []string{"CommandLine"}},
-			"ParentCommandLine": {TargetNames: []string{"ParentCommandLine"}},
+			"CommandLine":       {TargetNames: []string{"CmdLine"}},
+			"ParentCommandLine": {TargetNames: []string{"ParentCmdLine"}},
 			"Image":             {TargetNames: []string{"Image"}},
 			"ParentImage":       {TargetNames: []string{"ParentImage"}},
 			"User":              {TargetNames: []string{"User"}},
