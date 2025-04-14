@@ -30,10 +30,11 @@ type DetectionEvent struct {
 }
 
 type SigmaEngine struct {
-	rulesDir   string
-	evaluators map[string]*evaluator.RuleEvaluator
-	watcher    *fsnotify.Watcher
-	mu         sync.RWMutex
+	rulesDir     string
+	processRules map[string]*evaluator.RuleEvaluator
+	networkRules map[string]*evaluator.RuleEvaluator
+	watcher      *fsnotify.Watcher
+	mu           sync.RWMutex
 
 	eventChan chan DetectionEvent
 	queueSize int
@@ -61,11 +62,12 @@ Either:
 	}
 
 	engine := &SigmaEngine{
-		rulesDir:   rulesDir,
-		evaluators: make(map[string]*evaluator.RuleEvaluator),
-		watcher:    watcher,
-		eventChan:  make(chan DetectionEvent, queueSize),
-		queueSize:  queueSize,
+		rulesDir:     rulesDir,
+		processRules: make(map[string]*evaluator.RuleEvaluator),
+		networkRules: make(map[string]*evaluator.RuleEvaluator),
+		watcher:      watcher,
+		eventChan:    make(chan DetectionEvent, queueSize),
+		queueSize:    queueSize,
 	}
 
 	// Initial rule loading
@@ -122,8 +124,18 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 	globalLogger.Debug("sigma", "Processing detection event type: %s, source: %s",
 		evt.EventType, evt.DetectionSource)
 
+	var relevantRules map[string]*evaluator.RuleEvaluator
+	switch evt.DetectionSource {
+	case "process_creation":
+		relevantRules = se.processRules
+	case "network_connection", "dns_query":
+		relevantRules = se.networkRules
+	default:
+		return
+	}
+
 	// Check each rule
-	for _, evaluator := range se.evaluators {
+	for _, evaluator := range relevantRules {
 		result, err := evaluator.Matches(context.Background(), evt.Data)
 		if err != nil {
 			log.Printf("Error evaluating rule %s: %v", evaluator.Rule.ID, err)
@@ -215,7 +227,8 @@ func (se *SigmaEngine) GetMetrics() map[string]int64 {
 	return map[string]int64{
 		"dropped_events": se.dropCount.Load(),
 		"queue_size":     int64(se.queueSize),
-		"rules_loaded":   int64(len(se.evaluators)),
+		"process_rules":  int64(len(se.processRules)),
+		"network_rules":  int64(len(se.networkRules)),
 	}
 }
 
@@ -298,7 +311,11 @@ func (se *SigmaEngine) loadRuleFile(path string) error {
 
 	// Store in evaluators map
 	se.mu.Lock()
-	se.evaluators[rule.ID] = ruleEvaluator
+	if isNetworkRule(rule) {
+		se.networkRules[rule.ID] = ruleEvaluator
+	} else if isProcessCreationRule(rule) {
+		se.processRules[rule.ID] = ruleEvaluator
+	}
 	se.mu.Unlock()
 
 	return nil
@@ -479,9 +496,23 @@ func (se *SigmaEngine) watchRules() {
 					log.Printf("Error loading modified rule %s: %v", event.Name, err)
 				}
 			} else if event.Op&fsnotify.Remove != 0 {
-				// Remove rule from evaluators if it exists
+				// For removal, we need to check both maps
 				se.mu.Lock()
-				delete(se.evaluators, event.Name)
+				// Try to read the file one last time to determine its type
+				if content, err := ioutil.ReadFile(event.Name); err == nil {
+					if rule, err := sigma.ParseRule(content); err == nil {
+						if isNetworkRule(rule) {
+							delete(se.networkRules, rule.ID)
+						} else if isProcessCreationRule(rule) {
+							delete(se.processRules, rule.ID)
+						}
+					}
+				} else {
+					// If we can't read the file anymore, we need to check both maps
+					// We'll use the filename as a fallback key
+					delete(se.networkRules, event.Name)
+					delete(se.processRules, event.Name)
+				}
 				se.mu.Unlock()
 			}
 
