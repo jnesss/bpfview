@@ -652,6 +652,14 @@ func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.
 				}
 			}
 		}
+
+		// Calculate ProcessUID
+		h := fnv.New32a()
+		h.Write([]byte(fmt.Sprintf("%s-%d", info.StartTime.Format(time.RFC3339Nano), info.PID)))
+		if info.ExePath != "" {
+			h.Write([]byte(info.ExePath))
+		}
+		info.ProcessUID = fmt.Sprintf("%x", h.Sum32())
 	}
 
 	return info
