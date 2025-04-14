@@ -172,7 +172,7 @@ func (f *TextFormatter) writeSigmaHeader() {
 	fmt.Fprintln(f.sigmaLog, "timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags|detection_source")
 }
 
-func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
+func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -252,7 +252,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	uid := generateConnID(event.Pid, event.Ppid,
+	uid := GenerateConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
@@ -293,7 +293,7 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	network_uid := generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	network_uid := GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
 
 	eventType := "QUERY"
 	if event.IsResponse {
@@ -369,7 +369,7 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	network_uid := generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	network_uid := GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
 	processUID := info.ProcessUID
 
 	// Format cipher suites
