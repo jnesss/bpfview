@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/jnesss/bpfview/outputformats" // for GenerateConnID utility function
 	"github.com/jnesss/bpfview/types"
 )
 
@@ -91,7 +92,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	}
 
 	// Generate connection ID (same as network connection uid)
-	uid := generateConnID(event.Pid, event.Ppid, userEvent.SourceIP, userEvent.DestIP, event.SPort, event.DPort)
+	uid := outputformats.GenerateConnID(event.Pid, event.Ppid, userEvent.SourceIP, userEvent.DestIP, event.SPort, event.DPort)
 
 	// Print the event
 	eventType := "QUERY"
@@ -135,44 +136,48 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	// Log the complete message through the logger
 	globalLogger.Info("dns", "%s", msg.String())
 
-	// Submit to Sigma detection if enabled
-	if globalSigmaEngine != nil {
-		// For DNS queries
-		if !userEvent.IsResponse {
-			// Get process info from cache
-			var processInfo *types.ProcessInfo
-			if info, exists := GetProcessFromCache(event.Pid); exists {
-				processInfo = info
-			} else {
-				processInfo = &types.ProcessInfo{}
+	// Submit DNS queries to Sigma detection if enabled
+	if globalSigmaEngine != nil && !userEvent.IsResponse {
+
+		var processInfo *types.ProcessInfo
+		if info, exists := GetProcessFromCache(event.Pid); exists {
+			processInfo = info
+		} else {
+			processInfo = &types.ProcessInfo{}
+		}
+
+		for _, q := range userEvent.Questions {
+			// Map fields for Sigma detection
+			sigmaEvent := map[string]interface{}{
+				"ProcessId":           userEvent.Pid,
+				"ProcessName":         userEvent.Comm,
+				"DestinationHostname": q.Name,
+				"Initiated":           true,
+				"SourceIp":            userEvent.SourceIP.String(),
+				"DestinationIp":       userEvent.DestIP.String(),
+				"SourcePort":          userEvent.SourcePort,
+				"DestinationPort":     userEvent.DestPort,
+				"Direction":           "egress",
+
+				// these are used for correlation only
+				"network_uid":     uid,
+				"conversation_id": userEvent.ConversationID,
 			}
 
-			for _, q := range userEvent.Questions {
-				// Map fields for Sigma detection
-				sigmaEvent := map[string]interface{}{
-					"ProcessId":           userEvent.Pid,
-					"ProcessName":         userEvent.Comm,
-					"DestinationHostname": q.Name,
-					"Initiated":           true,
-					"Image":               processInfo.ExePath, // from process info
-					"CommandLine":         processInfo.CmdLine, // from process info
-				}
+			// Debug log
+			globalLogger.Debug("sigma", "Creating DNS query detection event for %s with SourceIp %s", q.Name, sigmaEvent["SourceIp"])
 
-				// Debug log
-				globalLogger.Debug("sigma", "Creating DNS query detection event for %s", q.Name)
-
-				// Create detection event
-				detectionEvent := DetectionEvent{
-					EventType:       "network_connection",
-					Data:            sigmaEvent,
-					Timestamp:       BpfTimestampToTime(event.Timestamp),
-					ProcessUID:      processInfo.ProcessUID,
-					PID:             event.Pid,
-					DetectionSource: "dns_query",
-				}
-
-				globalSigmaEngine.SubmitEvent(detectionEvent)
+			// Create detection event
+			detectionEvent := DetectionEvent{
+				EventType:       "network_connection",
+				Data:            sigmaEvent,
+				Timestamp:       BpfTimestampToTime(event.Timestamp),
+				ProcessUID:      processInfo.ProcessUID,
+				PID:             event.Pid,
+				DetectionSource: "dns_query",
 			}
+
+			globalSigmaEngine.SubmitEvent(detectionEvent)
 		}
 	}
 
