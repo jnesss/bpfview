@@ -454,7 +454,7 @@ Examples:
 Global Flags:
   -h, --help           Show this help message
 
-For more details and examples, visit: https://github.com/jnesss/bpfview\n`)
+For more details and examples, visit: https://github.com/jnesss/bpfview`)
 
 	h := fnv.New32a()
 	h.Write([]byte(fmt.Sprintf("%s-%d", time.Now().Format(time.RFC3339Nano), os.Getpid())))
