@@ -251,9 +251,12 @@ func (se *SigmaEngine) loadRuleFile(path string) error {
 		return fmt.Errorf("failed to parse rule %s: %v", path, err)
 	}
 
-	// Only process applicable process creation rules
-	if !isProcessCreationRule(rule) {
-		log.Printf("Ignoring non-process-creation rule: %s from %s", rule.Title, path)
+	if isNetworkRule(rule) {
+		log.Printf("Loading network rule: %s (%s)", rule.Title, path)
+	} else if isProcessCreationRule(rule) {
+		log.Printf("Loading process creation rule: %s (%s)", rule.Title, path)
+	} else {
+		log.Printf("Ignoring rule: %s from %s", rule.Title, path)
 		return nil
 	}
 
@@ -273,7 +276,6 @@ func (se *SigmaEngine) loadRuleFile(path string) error {
 	se.evaluators[rule.ID] = ruleEvaluator
 	se.mu.Unlock()
 
-	log.Printf("Loaded process creation rule: %s (%s)", rule.Title, path)
 	return nil
 }
 
@@ -362,16 +364,18 @@ func isNetworkRule(rule sigma.Rule) bool {
 		return false
 	}
 
-	// Check for network_connection category
+	// Check explicitly for network_connection category first
 	if rule.Logsource.Category == "network_connection" {
 		return true
 	}
 
-	// Check Linux product with network context
-	if rule.Logsource.Product == "linux" {
-		return strings.Contains(strings.ToLower(rule.Description), "network") ||
-			strings.Contains(strings.ToLower(rule.Description), "connection") ||
-			strings.Contains(strings.ToLower(rule.Description), "dns")
+	// More specific checks for network context
+	if rule.Logsource.Product == "linux" && (strings.Contains(strings.ToLower(rule.Description), "network") ||
+		strings.Contains(strings.ToLower(rule.Description), "connection") ||
+		strings.Contains(strings.ToLower(rule.Description), "dns") ||
+		// Look for network indicators in detection fields
+		rule.Detection.HasAnyField([]string{"DestinationHostname", "DestinationPort", "DestinationIp"})) {
+		return true
 	}
 
 	return false
@@ -386,14 +390,16 @@ func createFieldMappings() sigma.Config {
 			"ParentCommandLine": {TargetNames: []string{"ParentCommandLine"}},
 			"Image":             {TargetNames: []string{"Image"}},
 			"ParentImage":       {TargetNames: []string{"ParentImage"}},
-			"User":              {TargetNames: []string{"Username"}},
+			"User":              {TargetNames: []string{"User"}},
 			"ProcessId":         {TargetNames: []string{"ProcessId"}},
 			"ParentProcessId":   {TargetNames: []string{"ParentProcessId"}},
+			"CurrentDirectory":  {TargetNames: []string{"CurrentDirectory"}},
+			"ProcessName":       {TargetNames: []string{"ProcessName"}},
 
 			// Network fields
-			"DestinationPort":     {TargetNames: []string{"DestPort"}},
-			"DestinationHostname": {TargetNames: []string{"DestHostname"}},
-			"DestinationIp":       {TargetNames: []string{"DestIP"}},
+			"DestinationPort":     {TargetNames: []string{"DestinationPort"}},
+			"DestinationHostname": {TargetNames: []string{"DestinationHostname"}},
+			"DestinationIp":       {TargetNames: []string{"DestinationIp"}},
 			"Initiated":           {TargetNames: []string{"Initiated"}},
 		},
 	}
