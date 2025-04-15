@@ -2,13 +2,13 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
-	"hash/fnv"
 	"log"
 	"net"
 	"strings"
+	"time"
 
+	"github.com/jnesss/bpfview/outputformats" // for GenerateBidirectionalConnID utility function
 	"github.com/jnesss/bpfview/types"
 )
 
@@ -45,23 +45,36 @@ func protocolToString(proto uint8) string {
 	}
 }
 
-// Connection ID generation for event correlation
-func generateConnID(pid uint32, ppid uint32, srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16) string {
-	h := fnv.New64a()
-	binary.Write(h, binary.LittleEndian, pid)
-	binary.Write(h, binary.LittleEndian, ppid)
-	h.Write(srcIP.To4())
-	h.Write(dstIP.To4())
-	binary.Write(h, binary.LittleEndian, srcPort)
-	binary.Write(h, binary.LittleEndian, dstPort)
-	return fmt.Sprintf("%016x", h.Sum64())
-}
-
 // handleNetworkEvent processes network connection events
 func handleNetworkEvent(event *types.NetworkEvent) {
 	// Filter check right at the start
 	if globalEngine != nil && !globalEngine.matchNetwork(event) {
 		return
+	}
+
+	// Wait to start processing until we have processinfo
+	//  This is not my favorite design pattern
+	//  But we are reliant on the processinfo for the processUID correlation, amongst other things
+
+	var processInfo *types.ProcessInfo
+	var exists bool
+
+	// Try up to 10 times with 5ms delay (50ms total max)
+	for i := 0; i < 10; i++ {
+		processInfo, exists = GetProcessFromCache(event.Pid)
+		if exists {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !exists {
+		// Use minimal info if we still can't find process
+		processInfo = &types.ProcessInfo{
+			PID:  event.Pid,
+			Comm: string(bytes.TrimRight(event.Comm[:], "\x00")),
+			PPID: event.Ppid,
+		}
 	}
 
 	// Clean up process names
@@ -85,11 +98,51 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 	globalLogger.Info("network", "%s", msg.String())
 
 	if globalLogger != nil {
-		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
-			globalLogger.LogNetwork(event, processinfo)
-		} else {
-			globalLogger.LogNetwork(event, &types.ProcessInfo{})
+		globalLogger.LogNetwork(event, processInfo)
+	}
+
+	if globalSigmaEngine != nil {
+
+		networkUID := outputformats.GenerateBidirectionalConnID(event.Pid, event.Ppid,
+			uint32ToNetIP(event.SrcIP),
+			uint32ToNetIP(event.DstIP),
+			event.SrcPort, event.DstPort)
+
+		// Map fields for Sigma detection
+		sigmaEvent := map[string]interface{}{
+			// Process fields - minimal for matching since matches will get enriched in sigma.go
+			"ProcessId":   event.Pid,
+			"ProcessName": string(bytes.TrimRight(event.Comm[:], "\x00")),
+
+			// every network field that will be included in any networked-based yara rule
+			"SourceIp":        ipToString(event.SrcIP),
+			"SourcePort":      event.SrcPort,
+			"DestinationIp":   ipToString(event.DstIP),
+			"DestinationPort": event.DstPort,
+			"Protocol":        protocolToString(event.Protocol),
+			"Initiated":       event.Direction == types.FLOW_EGRESS,
+
+			// Correlation ID
+			"network_uid": networkUID,
 		}
+
+		if event.Direction == types.FLOW_EGRESS {
+			sigmaEvent["Direction"] = "egress"
+		} else if event.Direction == types.FLOW_INGRESS {
+			sigmaEvent["Direction"] = "ingress"
+		}
+
+		// Create detection event
+		detectionEvent := DetectionEvent{
+			EventType:       "network_connection",
+			Data:            sigmaEvent,
+			Timestamp:       BpfTimestampToTime(event.Timestamp),
+			ProcessUID:      processInfo.ProcessUID,
+			PID:             event.Pid,
+			DetectionSource: "network_connection",
+		}
+
+		globalSigmaEngine.SubmitEvent(detectionEvent)
 	}
 }
 

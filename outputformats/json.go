@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"strings"
 	"time"
@@ -33,6 +32,8 @@ type ProcessJSON struct {
 	SessionUID string    `json:"session_uid"`
 	Host       *HostInfo `json:"host,omitempty"`
 	EventType  string    `json:"event_type"`
+	ProcessUID string    `json:"process_uid"`
+	ParentUID  string    `json:"parent_uid,omitempty"`
 	Process    struct {
 		PID             uint32 `json:"pid"`
 		Comm            string `json:"comm"`
@@ -42,7 +43,7 @@ type ProcessJSON struct {
 		GID             uint32 `json:"gid"`
 		ExePath         string `json:"exe_path"`
 		BinaryHash      string `json:"binary_hash,omitempty"`
-		CmdLine         string `json:"cmdline"`
+		CmdLine         string `json:"command_line"`
 		Username        string `json:"username"`
 		CWD             string `json:"cwd"`
 		StartTime       string `json:"start_time,omitempty"`
@@ -88,7 +89,7 @@ type DNSJSON struct {
 	EventType      string    `json:"event_type"`
 	ProcessUID     string    `json:"process_uid"`
 	NetworkUID     string    `json:"network_uid"`
-	ConversationID string    `json:"conversation_id"`
+	ConversationID string    `json:"dns_conversation_uid"`
 	Process        struct {
 		PID        uint32 `json:"pid"`
 		Comm       string `json:"comm"`
@@ -158,12 +159,25 @@ type TLSJSON struct {
 	Message string `json:"message,omitempty"`
 }
 
+type NetworkInfo struct {
+	NetworkUID     string `json:"network_uid,omitempty"`
+	ConversationID string `json:"dns_conversation_uid,omitempty"`
+	Protocol       string `json:"protocol,omitempty"`
+	SourceIP       string `json:"source_ip,omitempty"`
+	SourcePort     uint16 `json:"source_port,omitempty"`
+	DestIP         string `json:"destination_ip,omitempty"`
+	DestPort       uint16 `json:"destination_port,omitempty"`
+	Direction      string `json:"direction,omitempty"`
+	Hostname       string `json:"destination_hostname,omitempty"`
+}
+
 type SigmaMatchJSON struct {
-	Timestamp  string    `json:"timestamp"`
-	SessionUID string    `json:"session_uid"`
-	Host       *HostInfo `json:"host,omitempty"`
-	EventType  string    `json:"event_type"` // Will be "sigma_match"
-	Rule       struct {
+	Timestamp     string    `json:"timestamp"`
+	SessionUID    string    `json:"session_uid"`
+	Host          *HostInfo `json:"host,omitempty"`
+	EventType     string    `json:"event_type"`     // Will be "sigma_match"
+	EventCategory string    `json:"event_category"` // "process" or "network"
+	Rule          struct {
 		ID           string   `json:"id"`
 		Name         string   `json:"name"`
 		Level        string   `json:"level"`
@@ -173,13 +187,37 @@ type SigmaMatchJSON struct {
 		Tags         []string `json:"tags"`
 	} `json:"rule"`
 	Process struct {
-		UID         string `json:"process_uid"`
-		PID         uint32 `json:"pid"`
-		Name        string `json:"name"`
-		CommandLine string `json:"command_line"`
-		WorkingDir  string `json:"working_directory"`
+		UID         string   `json:"process_uid"`
+		PID         uint32   `json:"pid"`
+		Name        string   `json:"name"`
+		ExePath     string   `json:"exe_path"`
+		CmdLine     string   `json:"command_line"`
+		WorkingDir  string   `json:"working_directory"`
+		Username    string   `json:"username,omitempty"`
+		StartTime   string   `json:"start_time,omitempty"`
+		BinaryHash  string   `json:"binary_hash,omitempty"`
+		Environment []string `json:"environment,omitempty"`
 	} `json:"process"`
-	Message string `json:"message"`
+	ParentProcess struct {
+		UID        string `json:"process_uid,omitempty"`
+		PID        uint32 `json:"pid,omitempty"`
+		Name       string `json:"name,omitempty"`
+		ExePath    string `json:"exe_path,omitempty"`
+		CmdLine    string `json:"command_line,omitempty"`
+		Username   string `json:"username,omitempty"`
+		StartTime  string `json:"start_time,omitempty"`
+		BinaryHash string `json:"binary_hash,omitempty"`
+	} `json:"parent_process,omitempty"`
+	Network         *NetworkInfo `json:"network,omitempty"`
+	Message         string       `json:"message"`
+	DetectionSource string       `json:"detection_source"`
+	Labels          struct {
+		SessionUID     string `json:"session_uid"`
+		ProcessUID     string `json:"process_uid"`
+		ParentUID      string `json:"parent_uid,omitempty"`
+		NetworkUID     string `json:"network_uid,omitempty"`
+		ConversationID string `json:"dns_conversation_uid,omitempty"`
+	} `json:"labels"`
 }
 
 func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *JSONFormatter {
@@ -203,11 +241,12 @@ func (f *JSONFormatter) Close() error {
 	return nil
 }
 
-func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
+func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error {
 	jsonEvent := ProcessJSON{
 		Timestamp:  BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		SessionUID: f.sessionUID,
 		EventType:  eventTypeString(event.EventType),
+		ProcessUID: info.ProcessUID,
 	}
 
 	// Add host info if enabled
@@ -260,6 +299,10 @@ func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		}
 	}
 
+	if parentinfo != nil && parentinfo.ProcessUID != "" {
+		jsonEvent.ParentUID = parentinfo.ProcessUID
+	}
+
 	if event.EventType == types.EVENT_PROCESS_EXEC {
 		jsonEvent.Message = fmt.Sprintf("process_exec: %s (PID: %d)", info.Comm, info.PID)
 	} else {
@@ -276,6 +319,7 @@ func (f *JSONFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		Timestamp:  BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		SessionUID: f.sessionUID,
 		EventType:  "network_flow",
+		ProcessUID: info.ProcessUID,
 	}
 
 	if f.hostname != "" || f.hostIP != "" {
@@ -285,16 +329,7 @@ func (f *JSONFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		}
 	}
 
-	// Generate UIDs for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	jsonEvent.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-
-	jsonEvent.NetworkUID = generateConnID(event.Pid, event.Ppid,
+	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
@@ -341,6 +376,7 @@ func (f *JSONFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		SessionUID:     f.sessionUID,
 		EventType:      eventType,
 		ConversationID: event.ConversationID,
+		ProcessUID:     info.ProcessUID,
 	}
 
 	if f.hostname != "" || f.hostIP != "" {
@@ -350,17 +386,8 @@ func (f *JSONFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		}
 	}
 
-	// Calculate process_uid
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	jsonEvent.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-
 	// Generate network_uid
-	jsonEvent.NetworkUID = generateConnID(event.Pid, event.Ppid,
+	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
 
@@ -440,6 +467,7 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 		Timestamp:  BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		SessionUID: f.sessionUID,
 		EventType:  "tls_handshake",
+		ProcessUID: info.ProcessUID,
 	}
 
 	if f.hostname != "" || f.hostIP != "" {
@@ -449,17 +477,8 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 		}
 	}
 
-	// Calculate process_uid
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	jsonEvent.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-
 	// Generate network_uid
-	jsonEvent.NetworkUID = generateConnID(event.Pid, event.Ppid,
+	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
 
@@ -517,9 +536,18 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 
 func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	jsonEvent := SigmaMatchJSON{
-		Timestamp:  match.Timestamp.UTC().Format(time.RFC3339Nano),
-		SessionUID: f.sessionUID,
-		EventType:  "sigma_match",
+		Timestamp:       match.Timestamp.UTC().Format(time.RFC3339Nano),
+		SessionUID:      f.sessionUID,
+		EventType:       "sigma_match",
+		DetectionSource: match.DetectionSource,
+	}
+
+	// Set event category based on detection source
+	switch match.DetectionSource {
+	case "process_creation":
+		jsonEvent.EventCategory = "process"
+	case "network_connection", "dns_query":
+		jsonEvent.EventCategory = "network"
 	}
 
 	// Add host info if enabled
@@ -544,10 +572,74 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	// Add process context
 	jsonEvent.Process.UID = match.ProcessUID
 	jsonEvent.Process.PID = match.PID
+
 	if match.ProcessInfo != nil {
 		jsonEvent.Process.Name = match.ProcessInfo.Comm
-		jsonEvent.Process.CommandLine = match.ProcessInfo.CmdLine
+		jsonEvent.Process.ExePath = match.ProcessInfo.ExePath
+		jsonEvent.Process.CmdLine = match.ProcessInfo.CmdLine
 		jsonEvent.Process.WorkingDir = match.ProcessInfo.WorkingDir
+		jsonEvent.Process.Username = match.ProcessInfo.Username
+		jsonEvent.Process.BinaryHash = match.ProcessInfo.BinaryHash
+		jsonEvent.Process.Environment = match.ProcessInfo.Environment
+
+		if !match.ProcessInfo.StartTime.IsZero() {
+			jsonEvent.Process.StartTime = match.ProcessInfo.StartTime.UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	// Parent process information
+	if match.ParentInfo != nil {
+		jsonEvent.ParentProcess.UID = match.ParentInfo.ProcessUID
+		jsonEvent.ParentProcess.PID = match.ParentInfo.PID
+		jsonEvent.ParentProcess.Name = match.ParentInfo.Comm
+		jsonEvent.ParentProcess.ExePath = match.ParentInfo.ExePath
+		jsonEvent.ParentProcess.CmdLine = match.ParentInfo.CmdLine
+		jsonEvent.ParentProcess.Username = match.ParentInfo.Username
+		jsonEvent.ParentProcess.BinaryHash = match.ParentInfo.BinaryHash
+
+		if !match.ParentInfo.StartTime.IsZero() {
+			jsonEvent.ParentProcess.StartTime = match.ParentInfo.StartTime.UTC().Format(time.RFC3339Nano)
+		}
+
+	}
+
+	// Add network correlation for network-related detections
+	// Network information for network-related detections
+	if match.DetectionSource == "dns_query" || match.DetectionSource == "network_connection" {
+		networkInfo := &NetworkInfo{}
+
+		// Core correlation IDs
+		networkInfo.NetworkUID = match.NetworkUID
+		if conversationID, ok := match.EventData["conversation_id"].(string); ok {
+			networkInfo.ConversationID = conversationID
+		}
+
+		// Network details
+		if srcIP, ok := match.EventData["SourceIp"].(string); ok {
+			networkInfo.SourceIP = srcIP
+		}
+		if srcPort, ok := match.EventData["SourcePort"].(uint16); ok {
+			networkInfo.SourcePort = srcPort
+		}
+		if dstIP, ok := match.EventData["DestinationIp"].(string); ok {
+			networkInfo.DestIP = dstIP
+		}
+		if dstPort, ok := match.EventData["DestinationPort"].(uint16); ok {
+			networkInfo.DestPort = dstPort
+		}
+		if protocol, ok := match.EventData["Protocol"].(string); ok {
+			networkInfo.Protocol = protocol
+		}
+		if direction, ok := match.EventData["Direction"].(string); ok {
+			networkInfo.Direction = direction
+		}
+
+		// DNS specific fields
+		if hostname, ok := match.EventData["DestinationHostname"].(string); ok {
+			networkInfo.Hostname = hostname
+		}
+
+		jsonEvent.Network = networkInfo
 	}
 
 	// Create descriptive message
@@ -556,6 +648,20 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	if match.ProcessInfo != nil {
 		jsonEvent.Message += fmt.Sprintf(" - Process: %s [%d]",
 			match.ProcessInfo.Comm, match.PID)
+	}
+
+	jsonEvent.Labels.SessionUID = f.sessionUID
+	jsonEvent.Labels.ProcessUID = match.ProcessUID
+	if match.ParentInfo != nil && match.ParentInfo.ProcessUID != "" {
+		jsonEvent.Labels.ParentUID = match.ParentInfo.ProcessUID
+	}
+	if match.DetectionSource == "network_connection" || match.DetectionSource == "dns_query" {
+		jsonEvent.Labels.NetworkUID = match.NetworkUID
+		if match.DetectionSource == "dns_query" {
+			if convID, ok := match.EventData["conversation_id"].(string); ok {
+				jsonEvent.Labels.ConversationID = convID
+			}
+		}
 	}
 
 	return f.encoder.Encode(jsonEvent)

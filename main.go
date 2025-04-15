@@ -353,8 +353,8 @@ func main() {
 
 	// Optional features
 	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
-	rootCmd.Flags().StringVar(&config.sigmaRulesDir, "sigma-rules", "",
-		"Directory containing Sigma rules (if not specified, Sigma detection is disabled)")
+	rootCmd.Flags().StringVar(&config.sigmaRulesDir, "sigma", "",
+		"Directory containing Sigma rules for process and network detection (if not specified, Sigma detection is disabled)")
 	rootCmd.Flags().IntVar(&config.sigmaQueueSize, "sigma-queue-size", 10000,
 		"Maximum number of events to queue for Sigma detection")
 
@@ -411,7 +411,7 @@ TLS Filters:
 Optional Features:
   --hash-binaries      Calculate and log MD5 hashes of executables
                        Useful for threat hunting and malware detection
-  --sigma-rules        Directory containing Sigma rules 
+  --sigma <dir>        Directory containing Sigma rules for process and network detection
                        If not specified, Sigma detection is disabled
   --sigma-queue-size   Maximum number of events to queue for Sigma detection
 

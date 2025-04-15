@@ -21,18 +21,20 @@ import (
 )
 
 type DetectionEvent struct {
-	EventType  string
-	Data       map[string]interface{}
-	Timestamp  time.Time
-	ProcessUID string // Just store process identifier
-	PID        uint32 // Keep PID for potential cache lookup
+	EventType       string
+	Data            map[string]interface{}
+	Timestamp       time.Time
+	ProcessUID      string // Just store process identifier
+	PID             uint32 // Keep PID for potential cache lookup
+	DetectionSource string
 }
 
 type SigmaEngine struct {
-	rulesDir   string
-	evaluators map[string]*evaluator.RuleEvaluator
-	watcher    *fsnotify.Watcher
-	mu         sync.RWMutex
+	rulesDir     string
+	processRules map[string]*evaluator.RuleEvaluator
+	networkRules map[string]*evaluator.RuleEvaluator
+	watcher      *fsnotify.Watcher
+	mu           sync.RWMutex
 
 	eventChan chan DetectionEvent
 	queueSize int
@@ -60,11 +62,12 @@ Either:
 	}
 
 	engine := &SigmaEngine{
-		rulesDir:   rulesDir,
-		evaluators: make(map[string]*evaluator.RuleEvaluator),
-		watcher:    watcher,
-		eventChan:  make(chan DetectionEvent, queueSize),
-		queueSize:  queueSize,
+		rulesDir:     rulesDir,
+		processRules: make(map[string]*evaluator.RuleEvaluator),
+		networkRules: make(map[string]*evaluator.RuleEvaluator),
+		watcher:      watcher,
+		eventChan:    make(chan DetectionEvent, queueSize),
+		queueSize:    queueSize,
 	}
 
 	// Initial rule loading
@@ -118,8 +121,21 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 	se.mu.RLock()
 	defer se.mu.RUnlock()
 
+	globalLogger.Debug("sigma", "Processing detection event type: %s, source: %s",
+		evt.EventType, evt.DetectionSource)
+
+	var relevantRules map[string]*evaluator.RuleEvaluator
+	switch evt.DetectionSource {
+	case "process_creation":
+		relevantRules = se.processRules
+	case "network_connection", "dns_query":
+		relevantRules = se.networkRules
+	default:
+		return
+	}
+
 	// Check each rule
-	for _, evaluator := range se.evaluators {
+	for _, evaluator := range relevantRules {
 		result, err := evaluator.Matches(context.Background(), evt.Data)
 		if err != nil {
 			log.Printf("Error evaluating rule %s: %v", evaluator.Rule.ID, err)
@@ -127,6 +143,10 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 		}
 
 		if result.Match {
+
+			globalLogger.Debug("sigma", "Rule matched: %s", evaluator.Rule.Title)
+			globalLogger.Debug("sigma", "Event Data: %v", evt.Data)
+
 			// Convert SearchResults
 			matchDetails := getMatchDetails(evaluator.Rule, result.SearchResults)
 
@@ -145,21 +165,22 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 				RuleDescription: evaluator.Rule.Description,
 				RuleReferences:  evaluator.Rule.References,
 				RuleTags:        evaluator.Rule.Tags,
+				DetectionSource: evt.DetectionSource,
 			}
 
-			// Try to get process info if available (we wont get it if handleEvent is post process Terminate)
+			// Try to get process info for matches
+			//  we wont get it if handleEvent is post process Terminate and thats ok
 			if info, exists := GetProcessFromCache(evt.PID); exists {
 				match.ProcessInfo = info
-				log.Printf("Rule match: %s (Process: %s [%d], Command: %s)",
-					evaluator.Rule.Title,
-					info.Comm,
-					evt.PID,
-					info.CmdLine)
-			} else {
-				log.Printf("Rule match: %s (ProcessUID: %s, PID: %d)",
-					evaluator.Rule.Title,
-					evt.ProcessUID,
-					evt.PID)
+				// Get parent info only if we have the process info
+				if pinfo, exists := GetProcessFromCache(info.PPID); exists {
+					match.ParentInfo = pinfo
+				}
+			}
+
+			// Add network correlation if available
+			if networkUID, ok := evt.Data["network_uid"].(string); ok {
+				match.NetworkUID = networkUID
 			}
 
 			// Write match directly to logger
@@ -207,7 +228,8 @@ func (se *SigmaEngine) GetMetrics() map[string]int64 {
 	return map[string]int64{
 		"dropped_events": se.dropCount.Load(),
 		"queue_size":     int64(se.queueSize),
-		"rules_loaded":   int64(len(se.evaluators)),
+		"process_rules":  int64(len(se.processRules)),
+		"network_rules":  int64(len(se.networkRules)),
 	}
 }
 
@@ -232,6 +254,24 @@ func (se *SigmaEngine) loadAllRules() error {
 	})
 }
 
+func hasAnyField(detection sigma.Detection, fields []string) bool {
+	// Check each search condition in the detection
+	for _, search := range detection.Searches {
+		// Check each matcher in the search
+		for _, matchers := range search.EventMatchers {
+			for _, matcher := range matchers {
+				// Check if the field name is in our list
+				for _, field := range fields {
+					if matcher.Field == field {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (se *SigmaEngine) loadRuleFile(path string) error {
 	content, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -250,9 +290,12 @@ func (se *SigmaEngine) loadRuleFile(path string) error {
 		return fmt.Errorf("failed to parse rule %s: %v", path, err)
 	}
 
-	// Only process applicable process creation rules
-	if !isProcessCreationRule(rule) {
-		log.Printf("Ignoring non-process-creation rule: %s from %s", rule.Title, path)
+	if isNetworkRule(rule) {
+		log.Printf("Loading network rule: %s (%s)", rule.Title, path)
+	} else if isProcessCreationRule(rule) {
+		log.Printf("Loading process creation rule: %s (%s)", rule.Title, path)
+	} else {
+		log.Printf("Ignoring rule: %s from %s", rule.Title, path)
 		return nil
 	}
 
@@ -269,10 +312,13 @@ func (se *SigmaEngine) loadRuleFile(path string) error {
 
 	// Store in evaluators map
 	se.mu.Lock()
-	se.evaluators[rule.ID] = ruleEvaluator
+	if isNetworkRule(rule) {
+		se.networkRules[rule.ID] = ruleEvaluator
+	} else if isProcessCreationRule(rule) {
+		se.processRules[rule.ID] = ruleEvaluator
+	}
 	se.mu.Unlock()
 
-	log.Printf("Loaded process creation rule: %s (%s)", rule.Title, path)
 	return nil
 }
 
@@ -293,13 +339,19 @@ func getMatchDetails(rule sigma.Rule, searchResults map[string]bool) string {
 					if i > 0 {
 						details.WriteString(" AND ")
 					}
+
 					for j, fieldMatch := range matcher {
 						if j > 0 {
 							details.WriteString(" WITH ")
 						}
+
+						op := "equals"
+						if len(fieldMatch.Modifiers) > 0 {
+							op = strings.Join(fieldMatch.Modifiers, " ")
+						}
 						details.WriteString(fmt.Sprintf("'%s' %s '%v'",
 							fieldMatch.Field,
-							strings.Join(fieldMatch.Modifiers, " "),
+							op,
 							fieldMatch.Values[0])) // Use first value for now
 					}
 				}
@@ -356,17 +408,48 @@ func isProcessCreationRule(rule sigma.Rule) bool {
 	return false
 }
 
+func isNetworkRule(rule sigma.Rule) bool {
+	if rule.Logsource.Product == "windows" {
+		return false
+	}
+
+	// Check explicitly for network_connection category first
+	if rule.Logsource.Category == "network_connection" {
+		return true
+	}
+
+	// More specific checks for network context
+	if rule.Logsource.Product == "linux" && (strings.Contains(strings.ToLower(rule.Description), "network") ||
+		strings.Contains(strings.ToLower(rule.Description), "connection") ||
+		strings.Contains(strings.ToLower(rule.Description), "dns") ||
+		// Look for network indicators in detection fields
+		hasAnyField(rule.Detection, []string{"DestinationHostname", "DestinationPort", "DestinationIp"})) {
+		return true
+	}
+
+	return false
+}
+
 func createFieldMappings() sigma.Config {
 	return sigma.Config{
-		Title: "BPFView Process Creation Mappings",
+		Title: "BPFView Process and Network Mappings",
 		FieldMappings: map[string]sigma.FieldMapping{
-			"CommandLine":       {TargetNames: []string{"CommandLine"}},
-			"ParentCommandLine": {TargetNames: []string{"ParentCommandLine"}},
+			// Process fields
+			"CommandLine":       {TargetNames: []string{"CmdLine"}},
+			"ParentCommandLine": {TargetNames: []string{"ParentCmdLine"}},
 			"Image":             {TargetNames: []string{"Image"}},
 			"ParentImage":       {TargetNames: []string{"ParentImage"}},
-			"User":              {TargetNames: []string{"Username"}},
+			"User":              {TargetNames: []string{"User"}},
 			"ProcessId":         {TargetNames: []string{"ProcessId"}},
 			"ParentProcessId":   {TargetNames: []string{"ParentProcessId"}},
+			"CurrentDirectory":  {TargetNames: []string{"CurrentDirectory"}},
+			"ProcessName":       {TargetNames: []string{"ProcessName"}},
+
+			// Network fields
+			"DestinationPort":     {TargetNames: []string{"DestinationPort"}},
+			"DestinationHostname": {TargetNames: []string{"DestinationHostname"}},
+			"DestinationIp":       {TargetNames: []string{"DestinationIp"}},
+			"Initiated":           {TargetNames: []string{"Initiated"}},
 		},
 	}
 }
@@ -414,9 +497,23 @@ func (se *SigmaEngine) watchRules() {
 					log.Printf("Error loading modified rule %s: %v", event.Name, err)
 				}
 			} else if event.Op&fsnotify.Remove != 0 {
-				// Remove rule from evaluators if it exists
+				// For removal, we need to check both maps
 				se.mu.Lock()
-				delete(se.evaluators, event.Name)
+				// Try to read the file one last time to determine its type
+				if content, err := ioutil.ReadFile(event.Name); err == nil {
+					if rule, err := sigma.ParseRule(content); err == nil {
+						if isNetworkRule(rule) {
+							delete(se.networkRules, rule.ID)
+						} else if isProcessCreationRule(rule) {
+							delete(se.processRules, rule.ID)
+						}
+					}
+				} else {
+					// If we can't read the file anymore, we need to check both maps
+					// We'll use the filename as a fallback key
+					delete(se.networkRules, event.Name)
+					delete(se.processRules, event.Name)
+				}
 				se.mu.Unlock()
 			}
 

@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,27 +165,71 @@ func (f *TextFormatter) writeTLSHeader() {
 }
 
 func (f *TextFormatter) writeEnvHeader() {
-	fmt.Fprintln(f.envLog, "timestamp|sessionid|process_uid|uid|pid|comm|env_var")
+	fmt.Fprintln(f.envLog, "timestamp|session_uid|process_uid|pid|comm|env_var")
 }
 
 func (f *TextFormatter) writeSigmaHeader() {
-	fmt.Fprintln(f.sigmaLog, "timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags")
+	// Core detection info
+	fmt.Fprintln(f.sigmaLog, strings.Join([]string{
+		"timestamp",
+		"session_uid",
+		"detection_source", // process_creation, network_connection, dns_query
+		"rule_id",
+		"rule_name",
+		"rule_level",
+		"severity_score", // Derived from level (10-90)
+		"rule_description",
+		"match_details",
+
+		// MITRE info
+		"mitre_tactics",
+		"mitre_techniques",
+
+		// Process info
+		"process_uid",
+		"process_name",
+		"process_path",
+		"process_cmdline",
+		"process_hash",
+		"process_start_time",
+		"pid",
+		"username",
+		"working_dir",
+
+		// Parent process info
+		"parent_process_uid",
+		"parent_name",
+		"parent_path",
+		"parent_cmdline",
+		"parent_hash",
+		"parent_start_time",
+		"ppid",
+
+		// Network fields (for network/DNS detections)
+		"network_uid",
+		"dns_conversation_uid",
+		"src_ip",
+		"src_port",
+		"dst_ip",
+		"dst_port",
+		"protocol",
+		"direction",
+		"direction_desc",
+
+		// Additional context
+		"container_id",
+		"rule_references",
+		"tags",
+	}, "|"))
 }
 
-func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo) error {
+func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	event_timestamp := BpfTimestampToTime(event.Timestamp)
 	event_timeStr := event_timestamp.Format(time.RFC3339Nano)
-
-	h := fnv.New32a()
-	start_timeStr := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", start_timeStr, info.PID)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	eventUID := fmt.Sprintf("%x", h.Sum32())
+	eventUID := info.ProcessUID
 
 	eventType := "EXEC"
 	if event.EventType == types.EVENT_PROCESS_EXIT {
@@ -260,7 +303,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	uid := generateConnID(event.Pid, event.Ppid,
+	uid := GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
@@ -273,14 +316,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		direction = "<"
 	}
 
-	// Calculate process_uid for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	processUID := fmt.Sprintf("%x", h.Sum32())
+	processUID := info.ProcessUID
 
 	_, err := fmt.Fprintf(f.networkLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d\n",
 		timestamp.Format(time.RFC3339Nano),
@@ -308,21 +344,14 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	network_uid := generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	network_uid := GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
 
 	eventType := "QUERY"
 	if event.IsResponse {
 		eventType = "RESPONSE"
 	}
 
-	// Calculate process_uid for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	processUID := fmt.Sprintf("%x", h.Sum32())
+	processUID := info.ProcessUID
 
 	if !event.IsResponse {
 		// For queries, log the questions
@@ -391,16 +420,8 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	network_uid := generateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
-
-	// Calculate process_uid for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	processUID := fmt.Sprintf("%x", h.Sum32())
+	network_uid := GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	processUID := info.ProcessUID
 
 	// Format cipher suites
 	cipherSuites := formatCipherSuites(event.CipherSuites)
@@ -447,14 +468,7 @@ func (f *TextFormatter) formatEnvironment(event *types.ProcessEvent, info *types
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
 	timeStr := timestamp.Format(time.RFC3339Nano)
-
-	// Generate unique ID (same as process event)
-	h := fnv.New32a()
-	h.Write([]byte(fmt.Sprintf("%s-%d", timeStr, info.PID)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	eventUID := fmt.Sprintf("%x", h.Sum32())
+	eventUID := info.ProcessUID
 
 	comm := cleanField(info.Comm, "-")
 
@@ -484,60 +498,193 @@ func escapeField(s string) string {
 }
 
 func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	// Extract MITRE info
+	var mitreTactics, mitreTechniques []string
+	var otherTags []string
+	for _, tag := range match.RuleTags {
+		if strings.HasPrefix(tag, "attack.") {
+			parts := strings.Split(tag, ".")
+			if len(parts) > 1 {
+				if strings.ContainsAny(parts[1], "0123456789") {
+					mitreTechniques = append(mitreTechniques, strings.ToUpper(parts[1]))
+				} else {
+					mitreTactics = append(mitreTactics, strings.Title(parts[1]))
+				}
+			}
+		} else {
+			otherTags = append(otherTags, tag)
+		}
+	}
 
-	// Format process info fields
-	processName := "-"
-	commandLine := "-"
-	workingDir := "-"
+	// Calculate severity score based on level
+	severityScore := "50" // Default mid-range
+	switch strings.ToLower(match.RuleLevel) {
+	case "critical":
+		severityScore = "90"
+	case "high":
+		severityScore = "70"
+	case "medium":
+		severityScore = "50"
+	case "low":
+		severityScore = "30"
+	case "informational":
+		severityScore = "10"
+	}
+
+	// Get process info
+	var processName, processPath, processCmdline, processHash, workingDir, username, parentUID string
+	var processStartTime time.Time
+	var parentName, parentPath, parentCmdline, parentHash, parentStartStr string
+	var containerID string
+
 	if match.ProcessInfo != nil {
 		processName = match.ProcessInfo.Comm
-		commandLine = match.ProcessInfo.CmdLine
+		processPath = match.ProcessInfo.ExePath
+		processCmdline = match.ProcessInfo.CmdLine
+		processHash = match.ProcessInfo.BinaryHash
 		workingDir = match.ProcessInfo.WorkingDir
+		username = match.ProcessInfo.Username
+		processStartTime = match.ProcessInfo.StartTime
+		if match.ProcessInfo.ContainerID == "" {
+			containerID = "-"
+		} else {
+			containerID = match.ProcessInfo.ContainerID
+		}
 	}
 
-	// Get enriched details
-	description := match.RuleDescription
-	if description == "" {
-		description = "-"
-	} else {
-		description = strings.ReplaceAll(description, "\n", " ") // Flatten description
+	parentUID = "-"
+	parentName = "-"
+	parentPath = "-"
+	parentCmdline = "-"
+	parentHash = "-"
+	parentStartStr = "-"
+	ppid := "0"
+
+	if match.ParentInfo != nil {
+		parentName = match.ParentInfo.Comm
+		parentPath = match.ParentInfo.ExePath
+		parentCmdline = match.ParentInfo.CmdLine
+		parentHash = match.ParentInfo.BinaryHash
+		ppid = fmt.Sprintf("%d", match.ParentInfo.PID)
+
+		if match.ParentInfo.ProcessUID != "" {
+			parentUID = match.ParentInfo.ProcessUID
+		}
+		if !match.ParentInfo.StartTime.IsZero() {
+			parentStartStr = match.ParentInfo.StartTime.Format(time.RFC3339Nano)
+		}
+
 	}
 
-	matchDetails := "-"
-	if details, ok := match.MatchedFields["details"].(string); ok {
-		matchDetails = details
+	// Network fields with defaults
+	networkUID := "-"
+	dnsConvUID := "-"
+	srcIP := "-"
+	srcPort := "-"
+	dstIP := "-"
+	dstPort := "-"
+	protocol := "-"
+	direction := "-"
+	directionDesc := "-"
+
+	if match.DetectionSource == "network_connection" || match.DetectionSource == "dns_query" {
+		networkUID = match.NetworkUID
+
+		if src, ok := match.EventData["SourceIp"].(string); ok {
+			srcIP = src
+		}
+		if sport, ok := match.EventData["SourcePort"].(uint16); ok {
+			srcPort = fmt.Sprintf("%d", sport)
+		}
+		if dst, ok := match.EventData["DestinationIp"].(string); ok {
+			dstIP = dst
+		}
+		if dport, ok := match.EventData["DestinationPort"].(uint16); ok {
+			dstPort = fmt.Sprintf("%d", dport)
+		}
+		if dir, ok := match.EventData["Direction"].(string); ok {
+			direction = dir
+			if dir == "ingress" {
+				directionDesc = "Incoming traffic from external host"
+			} else if dir == "egress" {
+				directionDesc = "Outgoing traffic to external service"
+			}
+		}
+		if match.DetectionSource == "dns_query" {
+			protocol = "UDP"
+		} else if match.DetectionSource == "network_connection" {
+			if proto, ok := match.EventData["Protocol"].(string); ok {
+				protocol = proto
+			}
+		}
 	}
 
-	// Format references and tags
-	references := strings.Join(match.RuleReferences, "; ")
-	if references == "" {
-		references = "-"
+	if match.DetectionSource == "dns_query" {
+		if convID, ok := match.EventData["conversation_id"].(string); ok {
+			dnsConvUID = convID
+		}
 	}
 
-	tags := strings.Join(match.RuleTags, ", ")
-	if tags == "" {
-		tags = "-"
+	// Format timestamps
+	processStartStr := "-"
+	if !processStartTime.IsZero() {
+		processStartStr = processStartTime.Format(time.RFC3339Nano)
 	}
 
-	// Write log entry
-	_, err := fmt.Fprintf(f.sigmaLog, "%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s\n",
+	// Write the record
+	values := []string{
 		match.Timestamp.Format(time.RFC3339Nano),
-		escapeField(match.RuleID),
-		escapeField(match.RuleName),
-		escapeField(match.RuleLevel),
-		escapeField(match.ProcessUID),
-		match.PID,
-		escapeField(processName),
-		escapeField(commandLine),
-		escapeField(workingDir),
-		escapeField(description),
-		escapeField(matchDetails),
-		escapeField(references),
-		escapeField(tags),
-	)
+		f.sessionUID,
+		match.DetectionSource,
+		match.RuleID,
+		match.RuleName,
+		match.RuleLevel,
+		severityScore,
+		escapeField(match.RuleDescription),
+		escapeField(match.MatchedFields["details"].(string)),
 
+		strings.Join(mitreTactics, ","),
+		strings.Join(mitreTechniques, ","),
+
+		match.ProcessUID,
+		processName,
+		escapeField(processPath),
+		escapeField(processCmdline),
+		processHash,
+		processStartStr,
+		fmt.Sprintf("%d", match.PID),
+		username,
+		escapeField(workingDir),
+
+		parentUID,
+		parentName,
+		escapeField(parentPath),
+		escapeField(parentCmdline),
+		parentHash,
+		parentStartStr,
+		ppid,
+
+		networkUID,
+		dnsConvUID,
+		srcIP,
+		srcPort,
+		dstIP,
+		dstPort,
+		protocol,
+		direction,
+		directionDesc,
+
+		containerID,
+		strings.Join(match.RuleReferences, ","),
+		strings.Join(otherTags, ","),
+	}
+
+	// Clean all values
+	for i, v := range values {
+		values[i] = strings.TrimSpace(v)
+	}
+
+	_, err := fmt.Fprintln(f.sigmaLog, strings.Join(values, "|"))
 	return err
 }
 

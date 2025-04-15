@@ -125,6 +125,7 @@ type ProcessInfo struct {
 	ExitTime    time.Time
 	ExitCode    uint32
 	BinaryHash  string
+	ProcessUID  string
 }
 
 // DNS event structures
@@ -194,11 +195,14 @@ type SigmaMatch struct {
 	RuleName        string
 	RuleLevel       string
 	ProcessUID      string
+	NetworkUID      string
 	PID             uint32
 	ProcessInfo     *ProcessInfo // May be nil if process no longer in cache
+	ParentInfo      *ProcessInfo // May also be nil if parent is no longer in cache
 	MatchedFields   map[string]interface{}
 	EventData       map[string]interface{} // Original event data that matched
 	RuleDescription string
 	RuleReferences  []string
 	RuleTags        []string
+	DetectionSource string // "dns_query" or "network_connection" or "process_creation"
 }
