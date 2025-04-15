@@ -198,6 +198,7 @@ type SigmaMatchJSON struct {
 		Environment []string `json:"environment,omitempty"`
 	} `json:"process"`
 	ParentProcess struct {
+		UID        string `json:"process_uid,omitempty"`
 		PID        uint32 `json:"pid,omitempty"`
 		Name       string `json:"name,omitempty"`
 		ExePath    string `json:"exe_path,omitempty"`
@@ -209,6 +210,13 @@ type SigmaMatchJSON struct {
 	Network         *NetworkInfo `json:"network,omitempty"`
 	Message         string       `json:"message"`
 	DetectionSource string       `json:"detection_source"`
+	Labels          struct {
+		SessionUID     string `json:"session_uid"`
+		ProcessUID     string `json:"process_uid"`
+		ParentUID      string `json:"parent_uid,omitempty"`
+		NetworkUID     string `json:"network_uid,omitempty"`
+		ConversationID string `json:"dns_conversation_uid,omitempty"`
+	} `json:"labels"`
 }
 
 func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *JSONFormatter {
@@ -599,6 +607,7 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 	// Parent process information
 	if match.ParentInfo != nil {
+		jsonEvent.ParentProcess.UID = match.ParentInfo.ProcessUID
 		jsonEvent.ParentProcess.PID = match.ParentInfo.PID
 		jsonEvent.ParentProcess.Name = match.ParentInfo.Comm
 		jsonEvent.ParentProcess.ExePath = match.ParentInfo.ExePath
@@ -657,6 +666,20 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	if match.ProcessInfo != nil {
 		jsonEvent.Message += fmt.Sprintf(" - Process: %s [%d]",
 			match.ProcessInfo.Comm, match.PID)
+	}
+
+	jsonEvent.Labels.SessionUID = f.sessionUID
+	jsonEvent.Labels.ProcessUID = match.ProcessUID
+	if match.ParentInfo != nil && match.ParentInfo.ProcessUID != "" {
+		jsonEvent.Labels.ParentUID = match.ParentInfo.ProcessUID
+	}
+	if match.DetectionSource == "network_connection" || match.DetectionSource == "dns_query" {
+		jsonEvent.Labels.NetworkUID = match.NetworkUID
+		if match.DetectionSource == "dns_query" {
+			if convID, ok := match.EventData["conversation_id"].(string); ok {
+				jsonEvent.Labels.ConversationID = convID
+			}
+		}
 	}
 
 	return f.encoder.Encode(jsonEvent)
