@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/jnesss/bpfview/outputformats" // for GenerateConnID utility function
 	"github.com/jnesss/bpfview/types"
@@ -28,6 +29,31 @@ func formatTlsVersion(input uint16) string {
 }
 
 func handleTLSEvent(event *types.BPFTLSEvent) {
+	// Wait to start processing until we have processinfo
+	//  This is not my favorite design pattern
+	//  But we are reliant on the processinfo for the processUID correlation, amongst other things
+
+	var processInfo *types.ProcessInfo
+	var exists bool
+
+	// Try up to 10 times with 5ms delay (50ms total max)
+	for i := 0; i < 10; i++ {
+		processInfo, exists = GetProcessFromCache(event.Pid)
+		if exists {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !exists {
+		// Use minimal info if we still can't find process
+		processInfo = &types.ProcessInfo{
+			PID:  event.Pid,
+			Comm: string(bytes.TrimRight(event.Comm[:], "\x00")),
+			PPID: event.Ppid,
+		}
+	}
+
 	// Clean up process names
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
@@ -37,7 +63,7 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 	dstIP := net.IPv4(event.DAddrA, event.DAddrB, event.DAddrC, event.DAddrD)
 
 	// Generate connection ID
-	uid := outputformats.GenerateConnID(event.Pid, event.Ppid, srcIP, dstIP, event.SPort, event.DPort)
+	uid := outputformats.GenerateBidirectionalConnID(event.Pid, event.Ppid, srcIP, dstIP, event.SPort, event.DPort)
 
 	// Construct userspace event
 	userEvent := types.UserSpaceTLSEvent{
@@ -145,11 +171,7 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 	globalLogger.Info("tls", "%s", msg.String())
 
 	if globalLogger != nil {
-		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
-			globalLogger.LogTLS(&userEvent, processinfo)
-		} else {
-			globalLogger.LogTLS(&userEvent, &types.ProcessInfo{})
-		}
+		globalLogger.LogTLS(&userEvent, processInfo)
 	}
 }
 
