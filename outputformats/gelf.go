@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"strings"
 	"time"
@@ -123,14 +122,11 @@ func (f *GELFFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		Timestamp:      float64(BpfTimestampToTime(event.Timestamp).Unix()) + float64(BpfTimestampToTime(event.Timestamp).Nanosecond())/1000000000,
 		TimestampHuman: BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		EventCategory:  "process",
+		ProcessUID:     info.ProcessUID,
 	}
 
 	// Set session info
 	msg.SessionUID = f.sessionUID
-
-	// Generate process UID for correlation
-	processUID := generateProcessUID(info)
-	msg.ProcessUID = processUID
 
 	// Event type specific details
 	eventType := "process_exec"
@@ -194,11 +190,11 @@ func (f *GELFFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		TimestampHuman: BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		EventCategory:  "network",
 		EventType:      "network_flow",
+		ProcessUID:     info.ProcessUID,
 	}
 
 	// Generate correlation IDs
 	msg.SessionUID = f.sessionUID
-	msg.ProcessUID = generateProcessUID(info)
 	msg.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
@@ -255,11 +251,11 @@ func (f *GELFFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		Timestamp:      float64(BpfTimestampToTime(event.Timestamp).Unix()) + float64(BpfTimestampToTime(event.Timestamp).Nanosecond())/1000000000,
 		TimestampHuman: BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		EventCategory:  "network",
+		ProcessUID:     info.ProcessUID,
 	}
 
 	// Generate correlation IDs
 	msg.SessionUID = f.sessionUID
-	msg.ProcessUID = generateProcessUID(info)
 	msg.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
@@ -357,11 +353,11 @@ func (f *GELFFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 		TimestampHuman: BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		EventType:      "tls_handshake",
 		EventCategory:  "network",
+		ProcessUID:     info.ProcessUID,
 	}
 
 	// Generate correlation IDs
 	msg.SessionUID = f.sessionUID
-	msg.ProcessUID = generateProcessUID(info)
 	msg.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
@@ -515,22 +511,4 @@ func (f *GELFFormatter) getHostname() string {
 	}
 	// Final fallback
 	return "unknown"
-}
-
-// Helper to generate process UID consistently
-func generateProcessUID(info *types.ProcessInfo) string {
-	if info == nil {
-		return ""
-	}
-	return fmt.Sprintf("%x", fnvHash(fmt.Sprintf("%s-%d-%s",
-		info.StartTime.Format(time.RFC3339Nano),
-		info.PID,
-		info.ExePath)))
-}
-
-// Helper for consistent hashing
-func fnvHash(s string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(s))
-	return h.Sum32()
 }
