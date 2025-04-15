@@ -86,6 +86,18 @@ type ecsEvent struct {
 	NetworkDirection     string `json:"network.direction,omitempty"`
 	NetworkDirectionDesc string `json:"network.direction_description,omitempty"`
 
+	// TCP flags
+	NetworkTCPFlags    string `json:"network.tcp.flags,omitempty"`
+	NetworkTCPFlagsRaw uint8  `json:"network.tcp.flags.raw,omitempty"`
+	NetworkTCPFlagFIN  bool   `json:"network.tcp.flags.fin,omitempty"`
+	NetworkTCPFlagSYN  bool   `json:"network.tcp.flags.syn,omitempty"`
+	NetworkTCPFlagRST  bool   `json:"network.tcp.flags.rst,omitempty"`
+	NetworkTCPFlagPSH  bool   `json:"network.tcp.flags.psh,omitempty"`
+	NetworkTCPFlagACK  bool   `json:"network.tcp.flags.ack,omitempty"`
+	NetworkTCPFlagURG  bool   `json:"network.tcp.flags.urg,omitempty"`
+	NetworkTCPFlagECE  bool   `json:"network.tcp.flags.ece,omitempty"`
+	NetworkTCPFlagCWR  bool   `json:"network.tcp.flags.cwr,omitempty"`
+
 	// Source/Destination
 	SourceIP          string `json:"source.ip,omitempty"`
 	SourcePort        int64  `json:"source.port,omitempty"`
@@ -255,6 +267,37 @@ func (f *ECSFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Proc
 	} else {
 		ecsEvent.NetworkDirection = "egress"
 		ecsEvent.NetworkDirectionDesc = "Outgoing traffic to external service"
+	}
+	if event.Protocol == 6 { // TCP
+		ecsEvent.NetworkTCPFlags = FormatTCPFlags(event.TCPFlags)
+		ecsEvent.NetworkTCPFlagsRaw = event.TCPFlags
+
+		// Also add individual flag fields for better Elastic querying
+		if (event.TCPFlags & 0x01) != 0 {
+			ecsEvent.NetworkTCPFlagFIN = true
+		}
+		if (event.TCPFlags & 0x02) != 0 {
+			ecsEvent.NetworkTCPFlagSYN = true
+		}
+		if (event.TCPFlags & 0x04) != 0 {
+			ecsEvent.NetworkTCPFlagRST = true
+		}
+		if (event.TCPFlags & 0x08) != 0 {
+			ecsEvent.NetworkTCPFlagPSH = true
+		}
+		if (event.TCPFlags & 0x10) != 0 {
+			ecsEvent.NetworkTCPFlagACK = true
+		}
+		if (event.TCPFlags & 0x20) != 0 {
+			ecsEvent.NetworkTCPFlagURG = true
+		}
+		if (event.TCPFlags & 0x40) != 0 {
+			ecsEvent.NetworkTCPFlagECE = true
+		}
+		if (event.TCPFlags & 0x80) != 0 {
+			ecsEvent.NetworkTCPFlagCWR = true
+		}
+
 	}
 
 	// Source and destination
