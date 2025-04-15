@@ -739,6 +739,18 @@ func initializeProcessCache() {
 			// Set Comm from ExePath basename, just like in EnrichProcessEvent
 			info.Comm = filepath.Base(info.ExePath)
 
+			// Calculate ProcessUID just like in EnrichProcessEvent
+			h := fnv.New32a()
+			if stat, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
+				// Use the /proc entry's creation time as the start time
+				info.StartTime = stat.ModTime()
+				h.Write([]byte(fmt.Sprintf("%s-%d", info.StartTime.Format(time.RFC3339Nano), pid)))
+				if info.ExePath != "" {
+					h.Write([]byte(info.ExePath))
+				}
+				info.ProcessUID = fmt.Sprintf("%x", h.Sum32())
+			}
+
 			// Calculate binary hash if enabled
 			if globalEngine != nil && globalEngine.config.HashBinaries {
 				if hash, err := CalculateMD5(info.ExePath); err == nil {
