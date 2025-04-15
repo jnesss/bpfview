@@ -106,6 +106,7 @@ static inline void process_cgroup_skb(struct __sk_buff *skb, __u8 direction) {
     __u16 src_port = 0;
     __u16 dst_port = 0;
     __u32 bytes = skb->len;
+    __u8 tcp_flags = 0; 
     
     // Extract protocol-specific info
     if (ip->protocol == IPPROTO_TCP) {
@@ -115,6 +116,13 @@ static inline void process_cgroup_skb(struct __sk_buff *skb, __u8 direction) {
         }
         src_port = bpf_ntohs(tcp->source);
         dst_port = bpf_ntohs(tcp->dest);
+        
+        // Extract TCP flags - access the flags byte directly
+        // The flags are in the 13th byte of the TCP header
+        unsigned char *tcp_header_bytes = (unsigned char *)tcp;
+        if ((void *)(tcp_header_bytes + 13) < data_end) {
+            tcp_flags = tcp_header_bytes[13];
+        }
         
         // Create connection tuple
         struct conn_tuple tuple = {
@@ -184,6 +192,7 @@ static inline void process_cgroup_skb(struct __sk_buff *skb, __u8 direction) {
     evt->protocol = ip->protocol;
     evt->flow_direction = direction;
     evt->bytes = bytes;
+    evt->tcp_flags = tcp_flags;
     
     bpf_ringbuf_submit(evt, 0);
 }
