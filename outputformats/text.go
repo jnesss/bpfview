@@ -165,11 +165,11 @@ func (f *TextFormatter) writeTLSHeader() {
 }
 
 func (f *TextFormatter) writeEnvHeader() {
-	fmt.Fprintln(f.envLog, "timestamp|sessionid|process_uid|uid|pid|comm|env_var")
+	fmt.Fprintln(f.envLog, "timestamp|session_uid|process_uid|pid|comm|env_var")
 }
 
 func (f *TextFormatter) writeSigmaHeader() {
-	fmt.Fprintln(f.sigmaLog, "timestamp|rule_id|rule_name|level|process_uid|pid|process_name|command_line|working_dir|description|match_details|references|tags|detection_source")
+	fmt.Fprintln(f.sigmaLog, "timestamp|session_uid|detection_source|rule_id|rule_name|level|severity_score|mitre_tactics|mitre_techniques|description|match_details|references|tags|process_uid|pid|ppid|process_name|parent_name|exe_path|parent_exe_path|cmdline|working_dir|binary_hash|username|user_id|group_id|container_id|start_time|network_uid|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc")
 }
 
 func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error {
@@ -450,62 +450,169 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Format process info fields (existing)
+	// Default values for fields that might be empty
+	severity_score := "50" // Default mid-range score
+	network_uid := "-"
+	dns_conversation_uid := "-"
+	src_ip := "-"
+	src_port := "-"
+	dst_ip := "-"
+	dst_port := "-"
+	protocol := "-"
+	direction := "-"
+	direction_desc := "-"
+
+	// Extract MITRE information and preserve other tags
+	var mitreTactics, mitreTechniques, otherTags []string
+	for _, tag := range match.RuleTags {
+		if strings.HasPrefix(tag, "attack.") {
+			parts := strings.Split(tag, ".")
+			if len(parts) > 1 {
+				if strings.ContainsAny(parts[1], "0123456789") {
+					mitreTechniques = append(mitreTechniques, strings.ToUpper(parts[1]))
+				} else {
+					mitreTactics = append(mitreTactics, strings.Title(parts[1]))
+				}
+			}
+		} else {
+			otherTags = append(otherTags, tag) // Preserve non-MITRE tags
+		}
+	}
+
+	// Format process info fields
 	processName := "-"
-	commandLine := "-"
+	ppid := "-"
+	parentName := "-"
+	exePath := "-"
+	parentExePath := "-"
+	cmdLine := "-"
 	workingDir := "-"
+	binaryHash := "-"
+	username := "-"
+	userID := "-"
+	groupID := "-"
+	containerID := "-"
+	startTime := "-"
+
 	if match.ProcessInfo != nil {
 		processName = match.ProcessInfo.Comm
-		commandLine = match.ProcessInfo.CmdLine
+		ppid = fmt.Sprintf("%d", match.ProcessInfo.PPID)
+		exePath = match.ProcessInfo.ExePath
+		cmdLine = match.ProcessInfo.CmdLine
 		workingDir = match.ProcessInfo.WorkingDir
+		binaryHash = match.ProcessInfo.BinaryHash
+		username = match.ProcessInfo.Username
+		userID = fmt.Sprintf("%d", match.ProcessInfo.UID)
+		groupID = fmt.Sprintf("%d", match.ProcessInfo.GID)
+		containerID = cleanField(match.ProcessInfo.ContainerID, "-")
+		if !match.ProcessInfo.StartTime.IsZero() {
+			startTime = match.ProcessInfo.StartTime.Format(time.RFC3339Nano)
+		}
 	}
 
-	// Get enriched details (existing)
-	description := match.RuleDescription
-	if description == "" {
-		description = "-"
-	} else {
-		description = strings.ReplaceAll(description, "\n", " ")
+	if match.ParentInfo != nil {
+		parentName = match.ParentInfo.Comm
+		parentExePath = match.ParentInfo.ExePath
 	}
 
+	// Handle network-based detections
+	if match.DetectionSource == "dns_query" || match.DetectionSource == "network_connection" {
+		network_uid = match.NetworkUID
+		if conversationID, ok := match.EventData["conversation_id"].(string); ok {
+			dns_conversation_uid = conversationID
+		}
+		if srcIP, ok := match.EventData["SourceIp"].(string); ok {
+			src_ip = srcIP
+		}
+		if srcPort, ok := match.EventData["SourcePort"].(uint16); ok {
+			src_port = fmt.Sprintf("%d", srcPort)
+		}
+		if dstIP, ok := match.EventData["DestinationIp"].(string); ok {
+			dst_ip = dstIP
+		}
+		if dstPort, ok := match.EventData["DestinationPort"].(uint16); ok {
+			dst_port = fmt.Sprintf("%d", dstPort)
+		}
+
+		// For protocol, always UDP for DNS
+		if match.DetectionSource == "dns_query" {
+			protocol = "UDP"
+		}
+
+		if dir, ok := match.EventData["Direction"].(string); ok {
+			direction = dir // Now we're updating the outer variable
+			if dir == "ingress" {
+				direction_desc = "Incoming traffic from external host"
+			} else if dir == "egress" {
+				direction_desc = "Outgoing traffic to external service"
+			}
+		}
+	}
+
+	// Clean and format all fields
+	description := cleanField(match.RuleDescription, "-")
 	matchDetails := "-"
 	if details, ok := match.MatchedFields["details"].(string); ok {
-		matchDetails = details
+		matchDetails = cleanField(details, "-")
+	}
+	references := cleanField(strings.Join(match.RuleReferences, "; "), "-")
+	tags := cleanField(strings.Join(otherTags, ", "), "-")
+	tactics := cleanField(strings.Join(mitreTactics, ", "), "-")
+	techniques := cleanField(strings.Join(mitreTechniques, ", "), "-")
+
+	// Determine severity score based on level
+	switch strings.ToLower(match.RuleLevel) {
+	case "critical":
+		severity_score = "90"
+	case "high":
+		severity_score = "70"
+	case "medium":
+		severity_score = "50"
+	case "low":
+		severity_score = "30"
+	case "informational":
+		severity_score = "10"
 	}
 
-	// Format references and tags (existing)
-	references := strings.Join(match.RuleReferences, "; ")
-	if references == "" {
-		references = "-"
-	}
-	tags := strings.Join(match.RuleTags, ", ")
-	if tags == "" {
-		tags = "-"
-	}
-
-	// Format detection source
-	detectionSource := "process_creation" // default for existing process rules
-	if match.DetectionSource != "" {
-		detectionSource = match.DetectionSource // "dns_query" or "network_connection"
-	}
-
-	// Write log entry (added detection_source field)
-	_, err := fmt.Fprintf(f.sigmaLog, "%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s\n",
+	// Write the log entry
+	_, err := fmt.Fprintf(f.sigmaLog, "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
 		match.Timestamp.Format(time.RFC3339Nano),
+		f.sessionUID,
+		match.DetectionSource,
 		escapeField(match.RuleID),
 		escapeField(match.RuleName),
 		escapeField(match.RuleLevel),
-		escapeField(match.ProcessUID),
-		match.PID,
-		escapeField(processName),
-		escapeField(commandLine),
-		escapeField(workingDir),
+		severity_score,
+		tactics,
+		techniques,
 		escapeField(description),
 		escapeField(matchDetails),
 		escapeField(references),
 		escapeField(tags),
-		escapeField(detectionSource),
-	)
+		escapeField(match.ProcessUID),
+		match.PID,
+		ppid,
+		escapeField(processName),
+		escapeField(parentName),
+		escapeField(exePath),
+		escapeField(parentExePath),
+		escapeField(cmdLine),
+		escapeField(workingDir),
+		escapeField(binaryHash),
+		escapeField(username),
+		escapeField(userID),
+		escapeField(groupID),
+		escapeField(containerID),
+		startTime,
+		network_uid,
+		dns_conversation_uid,
+		src_ip,
+		src_port,
+		dst_ip,
+		dst_port,
+		protocol,
+		direction,
+		direction_desc)
 
 	return err
 }
