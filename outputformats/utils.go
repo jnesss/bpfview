@@ -2,6 +2,7 @@
 package outputformats
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
@@ -59,14 +60,21 @@ func ipToString(ip uint32) string {
 }
 
 // Generate connection ID for event correlation
-func GenerateConnID(pid uint32, ppid uint32, srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16) string {
+func GenerateBidirectionalConnID(pid uint32, ppid uint32, ip1 net.IP, ip2 net.IP, port1 uint16, port2 uint16) string {
 	h := fnv.New64a()
 	binary.Write(h, binary.LittleEndian, pid)
 	binary.Write(h, binary.LittleEndian, ppid)
-	h.Write(srcIP.To4())
-	h.Write(dstIP.To4())
-	binary.Write(h, binary.LittleEndian, srcPort)
-	binary.Write(h, binary.LittleEndian, dstPort)
+
+	// Sort to ensure consistency regardless of packet direction
+	if bytes.Compare(ip1.To4(), ip2.To4()) > 0 {
+		ip1, ip2 = ip2, ip1
+		port1, port2 = port2, port1
+	}
+
+	h.Write(ip1.To4())
+	h.Write(ip2.To4())
+	binary.Write(h, binary.LittleEndian, port1)
+	binary.Write(h, binary.LittleEndian, port2)
 	return fmt.Sprintf("%016x", h.Sum64())
 }
 
