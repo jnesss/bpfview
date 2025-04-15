@@ -76,6 +76,18 @@ type gelfMessage struct {
 	DirectionDescription string `json:"_direction_description,omitempty"`
 	ByteCount            int    `json:"_byte_count,omitempty"`
 
+	// TCP flags
+	TCPFlags    string `json:"_tcp_flags,omitempty"`
+	TCPFlagsRaw uint8  `json:"_tcp_flags_raw,omitempty"`
+	TCPFlagFIN  bool   `json:"_tcp_flag_fin,omitempty"`
+	TCPFlagSYN  bool   `json:"_tcp_flag_syn,omitempty"`
+	TCPFlagRST  bool   `json:"_tcp_flag_rst,omitempty"`
+	TCPFlagPSH  bool   `json:"_tcp_flag_psh,omitempty"`
+	TCPFlagACK  bool   `json:"_tcp_flag_ack,omitempty"`
+	TCPFlagURG  bool   `json:"_tcp_flag_urg,omitempty"`
+	TCPFlagECE  bool   `json:"_tcp_flag_ece,omitempty"`
+	TCPFlagCWR  bool   `json:"_tcp_flag_cwr,omitempty"`
+
 	// DNS-specific fields
 	DNSType        string   `json:"_dns_type,omitempty"`
 	DNSFlags       int      `json:"_dns_flags,omitempty"`
@@ -214,6 +226,38 @@ func (f *GELFFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	msg.DestPort = int(event.DstPort)
 	msg.ByteCount = int(event.BytesCount)
 
+	// Set TCP flags for TCP connections
+	if event.Protocol == 6 { // TCP
+		msg.TCPFlags = FormatTCPFlags(event.TCPFlags)
+		msg.TCPFlagsRaw = event.TCPFlags
+
+		// Individual flags for easier filtering in Graylog
+		if (event.TCPFlags & 0x01) != 0 {
+			msg.TCPFlagFIN = true
+		}
+		if (event.TCPFlags & 0x02) != 0 {
+			msg.TCPFlagSYN = true
+		}
+		if (event.TCPFlags & 0x04) != 0 {
+			msg.TCPFlagRST = true
+		}
+		if (event.TCPFlags & 0x08) != 0 {
+			msg.TCPFlagPSH = true
+		}
+		if (event.TCPFlags & 0x10) != 0 {
+			msg.TCPFlagACK = true
+		}
+		if (event.TCPFlags & 0x20) != 0 {
+			msg.TCPFlagURG = true
+		}
+		if (event.TCPFlags & 0x40) != 0 {
+			msg.TCPFlagECE = true
+		}
+		if (event.TCPFlags & 0x80) != 0 {
+			msg.TCPFlagCWR = true
+		}
+	}
+
 	if event.Direction == types.FLOW_INGRESS {
 		msg.Direction = "ingress"
 		msg.DirectionDescription = "Incoming traffic from external host"
@@ -235,6 +279,9 @@ func (f *GELFFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	fullMsg.WriteString(fmt.Sprintf("Protocol: %s\n", msg.Protocol))
 	fullMsg.WriteString(fmt.Sprintf("Direction: %s (%s)\n", msg.Direction, msg.DirectionDescription))
 	fullMsg.WriteString(fmt.Sprintf("Bytes: %d\n", msg.ByteCount))
+	if event.Protocol == 6 && event.TCPFlags != 0 {
+		fullMsg.WriteString(fmt.Sprintf("TCP Flags: %s\n", msg.TCPFlags))
+	}
 	fullMsg.WriteString(fmt.Sprintf("\nProcess Details:\n"))
 	fullMsg.WriteString(fmt.Sprintf("Process: %s (PID: %d)\n", msg.ProcessName, msg.ProcessID))
 	fullMsg.WriteString(fmt.Sprintf("Parent: %s (PPID: %d)\n", msg.ParentName, msg.ParentID))
