@@ -129,8 +129,8 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
 
 ### JSON Output Format
 
-<details>
-<summary>Initial Process Execution</summary>
+
+#### Initial Process Execution
 ```json
 {
   "timestamp": "2025-04-15T20:15:06.956325705Z",
@@ -155,9 +155,9 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   "message": "process_exec: xmrig (PID: 324331)"
 }
 ```
-</details>
-<details>
-<summary>DNS Network Connection</summary>
+
+#### DNS Network Connection
+```json
 {
   "timestamp": "2025-04-15T20:15:06.963020024Z",
   "session_uid": "32476fd8",
@@ -182,9 +182,9 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   },
   "message": "Network connection: 172.31.44.65:59267 → 172.31.0.2:53 (udp)"
 }
-</details>
-<details>
-<summary>DNS Resolution</summary>
+```
+
+#### DNS Resolution
 ```json
 {
   "timestamp": "2025-04-15T20:15:06.963029272Z",
@@ -220,9 +220,8 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   "message": "DNS query: pool.minexmr.com"
 }
 ```
-</details>
-<details>
-<summary>Sigma Detection</summary>
+
+#### Sigma Detection
 ```json
 {
   "timestamp": "2025-04-15T20:15:06.963029272Z",
@@ -320,9 +319,8 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   }
 }
 ```
-</details>
-<details>
-<summary>Process Termination</summary>
+
+#### Process Termination
 ```json
 {
   "timestamp": "2025-04-15T20:15:11.362956681Z",
@@ -348,6 +346,7 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   "message": "process_exit: xmrig (PID: 324331)"
 }
 ```
+
 
 ## Command Line Interface
 
