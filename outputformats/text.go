@@ -169,7 +169,58 @@ func (f *TextFormatter) writeEnvHeader() {
 }
 
 func (f *TextFormatter) writeSigmaHeader() {
-	fmt.Fprintln(f.sigmaLog, "timestamp|session_uid|detection_source|rule_id|rule_name|level|severity_score|mitre_tactics|mitre_techniques|description|match_details|references|tags|process_uid|pid|ppid|process_name|parent_name|exe_path|parent_exe_path|cmdline|working_dir|binary_hash|username|user_id|group_id|container_id|start_time|network_uid|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc")
+	// Core detection info
+	fmt.Fprintln(f.sigmaLog, strings.Join([]string{
+		"timestamp",
+		"session_uid",
+		"detection_source", // process_creation, network_connection, dns_query
+		"rule_id",
+		"rule_name",
+		"rule_level",
+		"severity_score", // Derived from level (10-90)
+		"rule_description",
+		"match_details",
+
+		// MITRE info
+		"mitre_tactics",
+		"mitre_techniques",
+
+		// Process info
+		"process_uid",
+		"process_name",
+		"process_path",
+		"process_cmdline",
+		"process_hash",
+		"process_start_time",
+		"pid",
+		"username",
+		"working_dir",
+
+		// Parent process info
+		"parent_process_uid",
+		"parent_name",
+		"parent_path",
+		"parent_cmdline",
+		"parent_hash",
+		"parent_start_time",
+		"ppid",
+
+		// Network fields (for network/DNS detections)
+		"network_uid",
+		"dns_conversation_uid",
+		"src_ip",
+		"src_port",
+		"dst_ip",
+		"dst_port",
+		"protocol",
+		"direction",
+		"direction_desc",
+
+		// Additional context
+		"container_id",
+		"rule_references",
+		"tags",
+	}, "|"))
 }
 
 func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.ProcessInfo, parentinfo *types.ProcessInfo) error {
@@ -447,23 +498,9 @@ func escapeField(s string) string {
 }
 
 func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Default values for fields that might be empty
-	severity_score := "50" // Default mid-range score
-	network_uid := "-"
-	dns_conversation_uid := "-"
-	src_ip := "-"
-	src_port := "-"
-	dst_ip := "-"
-	dst_port := "-"
-	protocol := "-"
-	direction := "-"
-	direction_desc := "-"
-
-	// Extract MITRE information and preserve other tags
-	var mitreTactics, mitreTechniques, otherTags []string
+	// Extract MITRE info
+	var mitreTactics, mitreTechniques []string
+	var otherTags []string
 	for _, tag := range match.RuleTags {
 		if strings.HasPrefix(tag, "attack.") {
 			parts := strings.Split(tag, ".")
@@ -475,145 +512,179 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 				}
 			}
 		} else {
-			otherTags = append(otherTags, tag) // Preserve non-MITRE tags
+			otherTags = append(otherTags, tag)
 		}
 	}
 
-	// Format process info fields
-	processName := "-"
-	ppid := "-"
-	parentName := "-"
-	exePath := "-"
-	parentExePath := "-"
-	cmdLine := "-"
-	workingDir := "-"
-	binaryHash := "-"
-	username := "-"
-	userID := "-"
-	groupID := "-"
-	containerID := "-"
-	startTime := "-"
+	// Calculate severity score based on level
+	severityScore := "50" // Default mid-range
+	switch strings.ToLower(match.RuleLevel) {
+	case "critical":
+		severityScore = "90"
+	case "high":
+		severityScore = "70"
+	case "medium":
+		severityScore = "50"
+	case "low":
+		severityScore = "30"
+	case "informational":
+		severityScore = "10"
+	}
+
+	// Get process info
+	var processName, processPath, processCmdline, processHash, workingDir, username, parentUID string
+	var processStartTime time.Time
+	var parentName, parentPath, parentCmdline, parentHash, parentStartStr string
+	var containerID string
 
 	if match.ProcessInfo != nil {
 		processName = match.ProcessInfo.Comm
-		ppid = fmt.Sprintf("%d", match.ProcessInfo.PPID)
-		exePath = match.ProcessInfo.ExePath
-		cmdLine = match.ProcessInfo.CmdLine
+		processPath = match.ProcessInfo.ExePath
+		processCmdline = match.ProcessInfo.CmdLine
+		processHash = match.ProcessInfo.BinaryHash
 		workingDir = match.ProcessInfo.WorkingDir
-		binaryHash = match.ProcessInfo.BinaryHash
 		username = match.ProcessInfo.Username
-		userID = fmt.Sprintf("%d", match.ProcessInfo.UID)
-		groupID = fmt.Sprintf("%d", match.ProcessInfo.GID)
-		containerID = cleanField(match.ProcessInfo.ContainerID, "-")
-		if !match.ProcessInfo.StartTime.IsZero() {
-			startTime = match.ProcessInfo.StartTime.Format(time.RFC3339Nano)
+		processStartTime = match.ProcessInfo.StartTime
+		if match.ProcessInfo.ContainerID == "" {
+			containerID = "-"
+		} else {
+			containerID = match.ProcessInfo.ContainerID
 		}
 	}
+
+	parentUID = "-"
+	parentName = "-"
+	parentPath = "-"
+	parentCmdline = "-"
+	parentHash = "-"
+	parentStartStr = "-"
+	ppid := "0"
 
 	if match.ParentInfo != nil {
 		parentName = match.ParentInfo.Comm
-		parentExePath = match.ParentInfo.ExePath
+		parentPath = match.ParentInfo.ExePath
+		parentCmdline = match.ParentInfo.CmdLine
+		parentHash = match.ParentInfo.BinaryHash
+		ppid = fmt.Sprintf("%d", match.ParentInfo.PID)
+
+		if match.ParentInfo.ProcessUID != "" {
+			parentUID = match.ParentInfo.ProcessUID
+		}
+		if !match.ParentInfo.StartTime.IsZero() {
+			parentStartStr = match.ParentInfo.StartTime.Format(time.RFC3339Nano)
+		}
+
 	}
 
-	// Handle network-based detections
-	if match.DetectionSource == "dns_query" || match.DetectionSource == "network_connection" {
-		network_uid = match.NetworkUID
-		if conversationID, ok := match.EventData["conversation_id"].(string); ok {
-			dns_conversation_uid = conversationID
-		}
-		if srcIP, ok := match.EventData["SourceIp"].(string); ok {
-			src_ip = srcIP
-		}
-		if srcPort, ok := match.EventData["SourcePort"].(uint16); ok {
-			src_port = fmt.Sprintf("%d", srcPort)
-		}
-		if dstIP, ok := match.EventData["DestinationIp"].(string); ok {
-			dst_ip = dstIP
-		}
-		if dstPort, ok := match.EventData["DestinationPort"].(uint16); ok {
-			dst_port = fmt.Sprintf("%d", dstPort)
-		}
+	// Network fields with defaults
+	networkUID := "-"
+	dnsConvUID := "-"
+	srcIP := "-"
+	srcPort := "-"
+	dstIP := "-"
+	dstPort := "-"
+	protocol := "-"
+	direction := "-"
+	directionDesc := "-"
 
-		// For protocol, always UDP for DNS
+	if match.DetectionSource == "network_connection" || match.DetectionSource == "dns_query" {
+		networkUID = match.NetworkUID
+
+		if src, ok := match.EventData["SourceIp"].(string); ok {
+			srcIP = src
+		}
+		if sport, ok := match.EventData["SourcePort"].(uint16); ok {
+			srcPort = fmt.Sprintf("%d", sport)
+		}
+		if dst, ok := match.EventData["DestinationIp"].(string); ok {
+			dstIP = dst
+		}
+		if dport, ok := match.EventData["DestinationPort"].(uint16); ok {
+			dstPort = fmt.Sprintf("%d", dport)
+		}
+		if dir, ok := match.EventData["Direction"].(string); ok {
+			direction = dir
+			if dir == "ingress" {
+				directionDesc = "Incoming traffic from external host"
+			} else if dir == "egress" {
+				directionDesc = "Outgoing traffic to external service"
+			}
+		}
 		if match.DetectionSource == "dns_query" {
 			protocol = "UDP"
-		}
-
-		if dir, ok := match.EventData["Direction"].(string); ok {
-			direction = dir // Now we're updating the outer variable
-			if dir == "ingress" {
-				direction_desc = "Incoming traffic from external host"
-			} else if dir == "egress" {
-				direction_desc = "Outgoing traffic to external service"
+		} else if match.DetectionSource == "network_connection" {
+			if proto, ok := match.EventData["Protocol"].(string); ok {
+				protocol = proto
 			}
 		}
 	}
 
-	// Clean and format all fields
-	description := cleanField(match.RuleDescription, "-")
-	matchDetails := "-"
-	if details, ok := match.MatchedFields["details"].(string); ok {
-		matchDetails = cleanField(details, "-")
-	}
-	references := cleanField(strings.Join(match.RuleReferences, "; "), "-")
-	tags := cleanField(strings.Join(otherTags, ", "), "-")
-	tactics := cleanField(strings.Join(mitreTactics, ", "), "-")
-	techniques := cleanField(strings.Join(mitreTechniques, ", "), "-")
-
-	// Determine severity score based on level
-	switch strings.ToLower(match.RuleLevel) {
-	case "critical":
-		severity_score = "90"
-	case "high":
-		severity_score = "70"
-	case "medium":
-		severity_score = "50"
-	case "low":
-		severity_score = "30"
-	case "informational":
-		severity_score = "10"
+	if match.DetectionSource == "dns_query" {
+		if convID, ok := match.EventData["conversation_id"].(string); ok {
+			dnsConvUID = convID
+		}
 	}
 
-	// Write the log entry
-	_, err := fmt.Fprintf(f.sigmaLog, "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+	// Format timestamps
+	processStartStr := "-"
+	if !processStartTime.IsZero() {
+		processStartStr = processStartTime.Format(time.RFC3339Nano)
+	}
+
+	// Write the record
+	values := []string{
 		match.Timestamp.Format(time.RFC3339Nano),
 		f.sessionUID,
 		match.DetectionSource,
-		escapeField(match.RuleID),
-		escapeField(match.RuleName),
-		escapeField(match.RuleLevel),
-		severity_score,
-		tactics,
-		techniques,
-		escapeField(description),
-		escapeField(matchDetails),
-		escapeField(references),
-		escapeField(tags),
-		escapeField(match.ProcessUID),
-		match.PID,
-		ppid,
-		escapeField(processName),
-		escapeField(parentName),
-		escapeField(exePath),
-		escapeField(parentExePath),
-		escapeField(cmdLine),
+		match.RuleID,
+		match.RuleName,
+		match.RuleLevel,
+		severityScore,
+		escapeField(match.RuleDescription),
+		escapeField(match.MatchedFields["details"].(string)),
+
+		strings.Join(mitreTactics, ","),
+		strings.Join(mitreTechniques, ","),
+
+		match.ProcessUID,
+		processName,
+		escapeField(processPath),
+		escapeField(processCmdline),
+		processHash,
+		processStartStr,
+		fmt.Sprintf("%d", match.PID),
+		username,
 		escapeField(workingDir),
-		escapeField(binaryHash),
-		escapeField(username),
-		escapeField(userID),
-		escapeField(groupID),
-		escapeField(containerID),
-		startTime,
-		network_uid,
-		dns_conversation_uid,
-		src_ip,
-		src_port,
-		dst_ip,
-		dst_port,
+
+		parentUID,
+		parentName,
+		escapeField(parentPath),
+		escapeField(parentCmdline),
+		parentHash,
+		parentStartStr,
+		ppid,
+
+		networkUID,
+		dnsConvUID,
+		srcIP,
+		srcPort,
+		dstIP,
+		dstPort,
 		protocol,
 		direction,
-		direction_desc)
+		directionDesc,
 
+		containerID,
+		strings.Join(match.RuleReferences, ","),
+		strings.Join(otherTags, ","),
+	}
+
+	// Clean all values
+	for i, v := range values {
+		values[i] = strings.TrimSpace(v)
+	}
+
+	_, err := fmt.Fprintln(f.sigmaLog, strings.Join(values, "|"))
 	return err
 }
 
