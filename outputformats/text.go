@@ -153,7 +153,7 @@ func (f *TextFormatter) writeProcessHeader() {
 }
 
 func (f *TextFormatter) writeNetworkHeader() {
-	fmt.Fprintln(f.networkLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes")
+	fmt.Fprintln(f.networkLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags")
 }
 
 func (f *TextFormatter) writeDNSHeader() {
@@ -318,7 +318,13 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 
 	processUID := info.ProcessUID
 
-	_, err := fmt.Fprintf(f.networkLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d\n",
+	// Get TCP flags as a readable string
+	tcpFlags := "-"
+	if event.Protocol == 6 { // TCP
+		tcpFlags = FormatTCPFlags(event.TCPFlags)
+	}
+
+	_, err := fmt.Fprintf(f.networkLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d|%s\n",
 		timestamp.Format(time.RFC3339Nano),
 		f.sessionUID,
 		processUID,
@@ -334,6 +340,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		event.DstPort,
 		direction,
 		event.BytesCount,
+		tcpFlags,
 	)
 
 	return err
