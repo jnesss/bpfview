@@ -1023,8 +1023,11 @@ mv vmlinux.h bpf/vmlinux.h
 
 ### Building from Source
 ```bash
+sudo apt-get update
+sudo apt-get install -y clang llvm libbpf-dev linux-headers-generic gcc-multilib make golang-go
 git clone https://github.com/jnesss/bpfview.git
 cd bpfview
+ (copy or create bpf/vmlinux.h)
 go generate
 go build
 ```
