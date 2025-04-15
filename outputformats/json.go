@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"strings"
 	"time"
@@ -90,7 +89,7 @@ type DNSJSON struct {
 	EventType      string    `json:"event_type"`
 	ProcessUID     string    `json:"process_uid"`
 	NetworkUID     string    `json:"network_uid"`
-	ConversationID string    `json:"conversation_id"`
+	ConversationID string    `json:"dns_conversation_uid"`
 	Process        struct {
 		PID        uint32 `json:"pid"`
 		Comm       string `json:"comm"`
@@ -320,6 +319,7 @@ func (f *JSONFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		Timestamp:  BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		SessionUID: f.sessionUID,
 		EventType:  "network_flow",
+		ProcessUID: info.ProcessUID,
 	}
 
 	if f.hostname != "" || f.hostIP != "" {
@@ -329,16 +329,7 @@ func (f *JSONFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		}
 	}
 
-	// Generate UIDs for correlation
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	jsonEvent.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-
-	jsonEvent.NetworkUID = GenerateConnID(event.Pid, event.Ppid,
+	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
@@ -385,6 +376,7 @@ func (f *JSONFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		SessionUID:     f.sessionUID,
 		EventType:      eventType,
 		ConversationID: event.ConversationID,
+		ProcessUID:     info.ProcessUID,
 	}
 
 	if f.hostname != "" || f.hostIP != "" {
@@ -394,17 +386,8 @@ func (f *JSONFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		}
 	}
 
-	// Calculate process_uid
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	jsonEvent.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-
 	// Generate network_uid
-	jsonEvent.NetworkUID = GenerateConnID(event.Pid, event.Ppid,
+	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
 
@@ -484,6 +467,7 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 		Timestamp:  BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		SessionUID: f.sessionUID,
 		EventType:  "tls_handshake",
+		ProcessUID: info.ProcessUID,
 	}
 
 	if f.hostname != "" || f.hostIP != "" {
@@ -493,17 +477,8 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 		}
 	}
 
-	// Calculate process_uid
-	h := fnv.New32a()
-	process_start_str := info.StartTime.Format(time.RFC3339Nano)
-	h.Write([]byte(fmt.Sprintf("%s-%d", process_start_str, event.Pid)))
-	if info.ExePath != "" {
-		h.Write([]byte(info.ExePath))
-	}
-	jsonEvent.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-
 	// Generate network_uid
-	jsonEvent.NetworkUID = GenerateConnID(event.Pid, event.Ppid,
+	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
 
@@ -691,4 +666,3 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 	return f.encoder.Encode(jsonEvent)
 }
-
