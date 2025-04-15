@@ -105,11 +105,11 @@ timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_c
 2025-04-15T19:58:47.674451292Z|26d27091|b43317c5|EXEC|323583|311463|1000|1000|xmrig|bash|/tmp/mining_test/xmrig-6.21.0/xmrig|86f2790c04ccd113a564cc074efbcdfd|./xmrig -o pool.minexmr.com:443 -u 44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A|ec2-user|-|/tmp/mining_test/xmrig-6.21.0|2025-04-15T19:58:47.674451292Z|-|-|-
 
 # network.log
-timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes
-2025-04-15T19:58:47.681084478Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62
-2025-04-15T19:58:47.681110696Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62
-2025-04-15T19:58:47.682173283Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122
-2025-04-15T19:58:47.684441294Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122
+timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags
+2025-04-15T19:58:47.681084478Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62|-
+2025-04-15T19:58:47.681110696Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62|-
+2025-04-15T19:58:47.682173283Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122|-
+2025-04-15T19:58:47.684441294Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122|-
 
 # dns.log
 timestamp|session_uid|process_uid|network_uid|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl
@@ -479,14 +479,14 @@ timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_c
 
 #### Network Events (network.log)
 ```
-# Network connections with process attribution and byte counts
-timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes
-2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60
-2025-04-15T20:21:13.938474097Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|60
-2025-04-15T20:21:13.938510735Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|52
-2025-04-15T20:21:13.940705012Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|569
-2025-04-15T20:21:13.950270313Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|52
-2025-04-15T20:21:13.951504127Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|2948
+# Network connections with process attribution and byte counts and TCP flags
+timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags
+2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60|SYN
+2025-04-15T20:21:13.938474097Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|60|SYN,ACK
+2025-04-15T20:21:13.938510735Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|52|ACK
+2025-04-15T20:21:13.940705012Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|569|PSH,ACK
+2025-04-15T20:21:13.950270313Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|52|ACK
+2025-04-15T20:21:13.951504127Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|2948|PSH,ACK
 ```
 
 #### DNS Events (dns.log)
@@ -542,7 +542,7 @@ $ grep apple.com tls.log
 
 # Find corresponding network traffic
 $ grep fdaa795fe689e39d network.log  | head -1
-2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60
+2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60|SYN
 ```
 
 ### Sigma Detection Events
