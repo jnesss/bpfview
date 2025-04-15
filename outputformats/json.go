@@ -33,6 +33,8 @@ type ProcessJSON struct {
 	SessionUID string    `json:"session_uid"`
 	Host       *HostInfo `json:"host,omitempty"`
 	EventType  string    `json:"event_type"`
+	ProcessUID string    `json:"process_uid"`
+	ParentUID  string    `json:"parent_uid,omitempty"`
 	Process    struct {
 		PID             uint32 `json:"pid"`
 		Comm            string `json:"comm"`
@@ -245,6 +247,7 @@ func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		Timestamp:  BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		SessionUID: f.sessionUID,
 		EventType:  eventTypeString(event.EventType),
+		ProcessUID: info.ProcessUID,
 	}
 
 	// Add host info if enabled
@@ -295,6 +298,10 @@ func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		if !info.StartTime.IsZero() {
 			jsonEvent.Process.Duration = info.ExitTime.Sub(info.StartTime).String()
 		}
+	}
+
+	if parentinfo != nil && parentinfo.ProcessUID != "" {
+		jsonEvent.ParentUID = parentinfo.ProcessUID
 	}
 
 	if event.EventType == types.EVENT_PROCESS_EXEC {
@@ -684,3 +691,4 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 	return f.encoder.Encode(jsonEvent)
 }
+
