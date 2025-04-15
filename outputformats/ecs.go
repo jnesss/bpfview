@@ -288,7 +288,7 @@ func (f *ECSFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Proc
 	ecsEvent.Labels = map[string]string{
 		"session_uid": f.sessionUID,
 		"process_uid": info.ProcessUID,
-		"network_uid": GenerateConnID(event.Pid, event.Ppid,
+		"network_uid": GenerateBidirectionalConnID(event.Pid, event.Ppid,
 			uint32ToNetIP(event.SrcIP),
 			uint32ToNetIP(event.DstIP),
 			event.SrcPort, event.DstPort),
@@ -363,7 +363,7 @@ func (f *ECSFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pro
 	ecsEvent.Labels = map[string]string{
 		"session_uid":     f.sessionUID,
 		"process_uid":     info.ProcessUID,
-		"network_uid":     GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
+		"network_uid":     GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
 		"conversation_id": event.ConversationID,
 	}
 
@@ -417,7 +417,7 @@ func (f *ECSFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pro
 	ecsEvent.Labels = map[string]string{
 		"session_uid": f.sessionUID,
 		"process_uid": info.ProcessUID,
-		"network_uid": GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
+		"network_uid": GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
 	}
 
 	return f.encoder.Encode(ecsEvent)
@@ -572,4 +572,3 @@ func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 	return f.encoder.Encode(ecsEvent)
 }
-

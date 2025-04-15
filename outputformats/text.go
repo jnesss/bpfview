@@ -303,7 +303,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	uid := GenerateConnID(event.Pid, event.Ppid,
+	uid := GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
@@ -344,7 +344,7 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	network_uid := GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	network_uid := GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
 
 	eventType := "QUERY"
 	if event.IsResponse {
@@ -420,7 +420,7 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	defer f.mu.Unlock()
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
-	network_uid := GenerateConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	network_uid := GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
 	processUID := info.ProcessUID
 
 	// Format cipher suites

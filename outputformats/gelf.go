@@ -199,7 +199,7 @@ func (f *GELFFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	// Generate correlation IDs
 	msg.SessionUID = f.sessionUID
 	msg.ProcessUID = generateProcessUID(info)
-	msg.NetworkUID = GenerateConnID(event.Pid, event.Ppid,
+	msg.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
@@ -260,7 +260,7 @@ func (f *GELFFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 	// Generate correlation IDs
 	msg.SessionUID = f.sessionUID
 	msg.ProcessUID = generateProcessUID(info)
-	msg.NetworkUID = GenerateConnID(event.Pid, event.Ppid,
+	msg.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
 	msg.ConversationID = event.ConversationID
@@ -362,7 +362,7 @@ func (f *GELFFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	// Generate correlation IDs
 	msg.SessionUID = f.sessionUID
 	msg.ProcessUID = generateProcessUID(info)
-	msg.NetworkUID = GenerateConnID(event.Pid, event.Ppid,
+	msg.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
 
