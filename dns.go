@@ -6,12 +6,38 @@ import (
 	"hash/fnv"
 	"net"
 	"strings"
+	"time"
 
-	"github.com/jnesss/bpfview/outputformats" // for GenerateConnID utility function
+	"github.com/jnesss/bpfview/outputformats" // for GenerateBidirectionalConnID utility function
 	"github.com/jnesss/bpfview/types"
 )
 
 func handleDNSEvent(event *types.BPFDNSRawEvent) error {
+	// Wait to start processing until we have processinfo
+	//  This is not my favorite design pattern
+	//  But we are reliant on the processinfo for the processUID correlation, amongst other things
+
+	var processInfo *types.ProcessInfo
+	var exists bool
+
+	// Try up to 10 times with 5ms delay (50ms total max)
+	for i := 0; i < 10; i++ {
+		processInfo, exists = GetProcessFromCache(event.Pid)
+		if exists {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !exists {
+		// Use minimal info if we still can't find process
+		processInfo = &types.ProcessInfo{
+			PID:  event.Pid,
+			Comm: string(bytes.TrimRight(event.Comm[:], "\x00")),
+			PPID: event.Ppid,
+		}
+	}
+
 	// Clean up process names
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
@@ -92,7 +118,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	}
 
 	// Generate connection ID (same as network connection uid)
-	uid := outputformats.GenerateConnID(event.Pid, event.Ppid, userEvent.SourceIP, userEvent.DestIP, event.SPort, event.DPort)
+	uid := outputformats.GenerateBidirectionalConnID(event.Pid, event.Ppid, userEvent.SourceIP, userEvent.DestIP, event.SPort, event.DPort)
 
 	// Print the event
 	eventType := "QUERY"
@@ -138,14 +164,6 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 
 	// Submit DNS queries to Sigma detection if enabled
 	if globalSigmaEngine != nil && !userEvent.IsResponse {
-
-		var processInfo *types.ProcessInfo
-		if info, exists := GetProcessFromCache(event.Pid); exists {
-			processInfo = info
-		} else {
-			processInfo = &types.ProcessInfo{}
-		}
-
 		for _, q := range userEvent.Questions {
 			// Map fields for Sigma detection
 			sigmaEvent := map[string]interface{}{
