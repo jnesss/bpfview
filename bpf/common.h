@@ -87,7 +87,7 @@ struct process_event {
 struct network_event {
     __u32 event_type;
     __u32 pid;
-    __u32 ppid;              // Added back
+    __u32 ppid;              
     __u64 timestamp;
     char comm[TASK_COMM_LEN];        // 16 bytes
     char parent_comm[TASK_COMM_LEN]; // 16 bytes
@@ -98,7 +98,8 @@ struct network_event {
     __u8  protocol;
     __u8  flow_direction;
     __u32 bytes;
-    __u32 padding;                   // ensure 8-byte alignment
+    __u8  tcp_flags;                 // New field for TCP flags
+    __u8  padding[3];                // Adjusted padding to maintain 8-byte alignment
 } __attribute__((packed));
 
 struct dns_event {

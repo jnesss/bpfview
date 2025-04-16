@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/jnesss/bpfview/types"
@@ -39,6 +40,41 @@ func eventTypeString(eventType uint32) string {
 	default:
 		return fmt.Sprintf("unknown_%d", eventType)
 	}
+}
+
+// FormatTCPFlags converts raw TCP flags byte to a readable string
+func FormatTCPFlags(flags uint8) string {
+	var result []string
+
+	if (flags & 0x01) != 0 {
+		result = append(result, "FIN")
+	}
+	if (flags & 0x02) != 0 {
+		result = append(result, "SYN")
+	}
+	if (flags & 0x04) != 0 {
+		result = append(result, "RST")
+	}
+	if (flags & 0x08) != 0 {
+		result = append(result, "PSH")
+	}
+	if (flags & 0x10) != 0 {
+		result = append(result, "ACK")
+	}
+	if (flags & 0x20) != 0 {
+		result = append(result, "URG")
+	}
+	if (flags & 0x40) != 0 {
+		result = append(result, "ECE")
+	}
+	if (flags & 0x80) != 0 {
+		result = append(result, "CWR")
+	}
+
+	if len(result) == 0 {
+		return "-"
+	}
+	return strings.Join(result, ",")
 }
 
 // Network utility functions

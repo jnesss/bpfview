@@ -56,7 +56,8 @@ type NetworkEvent struct {
 	Protocol   uint8
 	Direction  uint8
 	BytesCount uint32
-	_          uint32 // padding for 8-byte alignment
+	TCPFlags   uint8
+	Padding    [3]uint8 // Keep alignment intact
 }
 
 // BPFDNSRawEvent layout matches dnsmon.c

@@ -78,6 +78,7 @@ type NetworkJSON struct {
 		Direction     string `json:"direction"`
 		DirectionDesc string `json:"direction_description,omitempty"`
 		Bytes         uint32 `json:"bytes"`
+		TCPFlags      string `json:"tcp_flags,omitempty"`
 	} `json:"network"`
 	Message string `json:"message,omitempty"`
 }
@@ -348,6 +349,9 @@ func (f *JSONFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 	jsonEvent.Network.DestIP = ipToString(event.DstIP)
 	jsonEvent.Network.DestPort = event.DstPort
 	jsonEvent.Network.Bytes = event.BytesCount
+	if event.Protocol == 6 { // TCP
+		jsonEvent.Network.TCPFlags = FormatTCPFlags(event.TCPFlags)
+	}
 
 	if event.Direction == types.FLOW_INGRESS {
 		jsonEvent.Network.Direction = "ingress"
