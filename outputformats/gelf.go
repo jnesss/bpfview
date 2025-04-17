@@ -141,7 +141,7 @@ func (f *GELFFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 	msg.SessionUID = f.sessionUID
 
 	// Event type specific details
-	eventType := "process_exec"
+	var eventType string
 	if event.EventType == types.EVENT_PROCESS_EXIT {
 		eventType = "process_exit"
 		// Set exit code
@@ -152,6 +152,10 @@ func (f *GELFFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 			duration := info.ExitTime.Sub(info.StartTime)
 			msg.ProcessDuration = duration.String()
 		}
+	} else if event.EventType == types.EVENT_PROCESS_EXEC {
+		eventType = "process_exec"
+	} else if event.EventType == types.EVENT_PROCESS_FORK {
+		eventType = "process_fork"
 	}
 
 	// Process details
@@ -559,3 +563,4 @@ func (f *GELFFormatter) getHostname() string {
 	// Final fallback
 	return "unknown"
 }
+
