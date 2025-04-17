@@ -121,11 +121,11 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
 2025-04-15T19:58:47.681099506Z|26d27091|dns_query|a46c93b7-55ed-4d27-a41b-c259456c4746|Linux Crypto Mining Pool Connections|high|70|Detects process connections to a Monero crypto mining pool|'DestinationHostname' equals 'pool.minexmr.com'|Impact|T1496|b43317c5|xmrig|/tmp/mining_test/xmrig-6.21.0/xmrig|./xmrig -o pool.minexmr.com:443 -u 44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A|86f2790c04ccd113a564cc074efbcdfd|2025-04-15T19:58:47.674451292Z|323583|ec2-user|/tmp/mining_test/xmrig-6.21.0|90ed22d6|bash|/usr/bin/bash|-bash|abb8abb399698492682001a40813ebb5|2025-04-15T15:12:52.770964662Z|311463|d6cce83a127971e8|82afc580|172.31.44.65|44355|172.31.0.2|53|UDP|egress|Outgoing traffic to external service|-|https://www.poolwatch.io/coin/monero|
 ```
 
-# Correlation IDs listed above:
-- session_uid 26d27091:  Identifies all events captured during this bpfview session
-- process_uid b43317c5:  Uniquely identifies the process involved across all log files
-- network_uid d6cce83a127971e8:  Correlates the network resquest/response, the DNS conversation, and the Sigma detection match
-- dns_conversation_uid d6cce83a127971e8:  Identifies the request and response for the A record for pool.minexmr.com
+#### Correlation IDs listed above:
+- session_uid ```26d27091```:  Identifies all events captured during this bpfview session
+- process_uid ```b43317c5```:  Uniquely identifies the process involved across all log files
+- network_uid ```d6cce83a127971e8```:  Correlates the network resquest/response, the DNS conversation, and the Sigma detection match
+- dns_conversation_uid ```d6cce83a127971e8```:  Identifies the request and response for the A record for pool.minexmr.com
 
 ### JSON Output Format
 
@@ -381,10 +381,10 @@ Record process termination details
 
 This comprehensive process tracking enables detection of sophisticated attacks:
 
-- Process Hollowing: Detect unusual delays between fork and exec events that may indicate memory manipulation
-- Fork Bombs: Identify processes that fork repeatedly without ever calling exec
-- Failed Executions: Spot processes that attempt to execute non-existent binaries
-- Process Substitution: Detect when a seemingly innocent process loads an unexpected executable
+- **Process Hollowing**: Detect unusual delays between fork and exec events that may indicate memory manipulation
+- **Fork Bombs**: Identify processes that fork repeatedly without ever calling exec
+- **Failed Executions**: Spot processes that attempt to execute non-existent binaries
+- **Process Substitution**: Detect when a seemingly innocent process loads an unexpected executable
 
 ### SQLite Forensic Analysis
 
