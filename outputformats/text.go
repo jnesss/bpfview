@@ -231,9 +231,13 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 	event_timeStr := event_timestamp.Format(time.RFC3339Nano)
 	eventUID := info.ProcessUID
 
-	eventType := "EXEC"
+	var eventType string
 	if event.EventType == types.EVENT_PROCESS_EXIT {
 		eventType = "EXIT"
+	} else if event.EventType == types.EVENT_PROCESS_EXEC {
+		eventType = "EXEC"
+	} else if event.EventType == types.EVENT_PROCESS_FORK {
+		eventType = "FORK"
 	}
 
 	// Clean fields (reusing existing cleanField functions)
@@ -268,7 +272,7 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		event_timeStr, // Event timestamp
 		f.sessionUID,  // Session identifier
 		eventUID,      // Enhanced UID
-		eventType,     // EXEC or EXIT
+		eventType,     // EXEC or FORK or EXIT
 		info.PID,
 		info.PPID,
 		info.UID,
