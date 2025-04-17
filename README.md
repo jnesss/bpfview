@@ -347,6 +347,102 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
 }
 ```
 
+## Process Lifecycle Visibility
+
+BPFView provides complete process lifecycle visibility by tracking three distinct event types:
+
+### Fork, Exec, and Exit Events
+
+#### FORK Events
+
+Capture the initial process creation via the fork() or clone() system calls
+
+- Records parent-child relationships
+- Inherits parent environment and working directory
+- Tracks the precise moment of process creation
+
+#### EXEC Events
+
+Track when a process loads a new executable via execve()
+
+- Records full command line arguments
+- Captures binary hash for integrity verification
+- Documents environment variables and working directory
+
+#### EXIT Events
+
+Record process termination details
+
+- Logs exit code and termination reason
+- Calculates precise process duration
+- Provides execution timeline completion
+
+### Enhanced Security Analysis
+
+This comprehensive process tracking enables detection of sophisticated attacks:
+
+- Process Hollowing: Detect unusual delays between fork and exec events that may indicate memory manipulation
+- Fork Bombs: Identify processes that fork repeatedly without ever calling exec
+- Failed Executions: Spot processes that attempt to execute non-existent binaries
+- Process Substitution: Detect when a seemingly innocent process loads an unexpected executable
+
+### SQLite Forensic Analysis
+
+BPFView's SQLite output format stores each process event with its specific event type, enabling powerful forensic queries:
+
+```sql
+-- Find process exec/fork anomalies (fork without corresponding exec)
+SELECT p1.pid, p1.comm, p1.process_uid, p1.timestamp 
+FROM processes p1
+WHERE p1.event_type = 'fork'
+AND NOT EXISTS (
+    SELECT 1 FROM processes p2
+    WHERE p2.pid = p1.pid AND p2.event_type = 'exec'
+);
+
+-- Detect suspicious timing between fork and exec (potential process hollowing)
+SELECT p1.pid, p1.comm, p2.comm, 
+       p2.timestamp - p1.timestamp AS delay_microseconds
+FROM processes p1
+JOIN processes p2 ON p1.pid = p2.pid
+WHERE p1.event_type = 'fork' AND p2.event_type = 'exec'
+AND (p2.timestamp - p1.timestamp) > 500000; -- More than 500ms delay
+
+-- Identify processes with unexpected exit codes
+SELECT p1.pid, p1.comm, p3.exit_code, p1.cmdline
+FROM processes p1
+JOIN processes p3 ON p1.pid = p3.pid
+WHERE p1.event_type = 'exec' AND p3.event_type = 'exit'
+AND p3.exit_code > 0;
+```
+
+### Complete Process Timeline
+
+BPFView gives you a comprehensive view of the entire process lifecycle:
+
+```
+[PROCESS] FORK: PID=442954 comm=setup-policy-ro ProcessUID=2ac5def9
+      Parent: [443274] setup-policy-ro
+      User: root (0/0)
+      Path: /usr/bin/bash (inherited)
+      CWD: / (inherited)
+      Command: /usr/bin/bash /usr/bin/setup-policy-routes ens5 refresh (inherited)
+
+[PROCESS] EXEC: PID=442954 comm=setup-policy-ro ProcessUID=4f8cef96
+      Parent: [443274] setup-policy-ro
+      User: root (0/0)
+      Path: /usr/bin/bash
+      CWD: /
+      Command: /usr/bin/bash /usr/bin/setup-policy-routes ens5 refresh
+
+[PROCESS] EXIT: PID=442954 comm=setup-policy-ro
+      Parent: [443274] setup-policy-ro
+      User: root (0/0)
+      Exit Code: 0
+      Duration: 125.784ms
+```
+
+This granular process tracing provides unparalleled visibility for security monitoring, troubleshooting, and performance analysis.
 
 ## Command Line Interface
 

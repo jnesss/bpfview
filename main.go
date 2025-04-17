@@ -600,7 +600,7 @@ func handleEvent(data []byte, rc readerContext) error {
 
 	// Process based on event type
 	switch header.EventType {
-	case types.EVENT_PROCESS_EXEC, types.EVENT_PROCESS_EXIT:
+	case types.EVENT_PROCESS_EXEC, types.EVENT_PROCESS_EXIT, types.EVENT_PROCESS_FORK:
 		var event types.ProcessEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
 			return fmt.Errorf("error parsing process event: %w", err)
@@ -787,6 +787,13 @@ func attachPrograms(netmonObjs netmonObjects, dnsmonObjs dnsmonObjects,
 		log.Fatalf("attaching process exit: %v", err)
 	}
 	links = append(links, execLink2)
+
+	forkLink, err := link.Tracepoint("sched", "sched_process_fork", execveObjs.TraceSchedProcessFork, nil)
+	if err != nil {
+		closeLinks(links)
+		log.Fatalf("attaching process fork: %v", err)
+	}
+	links = append(links, forkLink)
 
 	log.Printf("Successfully attached %d BPF programs", len(links))
 	return links

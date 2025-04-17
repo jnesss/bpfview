@@ -1,4 +1,4 @@
-// bpf/execve.c - Version 6: Simplified but effective argument capture
+// bpf/execve.c - Version 7: Add fork visibility
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
@@ -135,9 +135,60 @@ int trace_enter_execve(struct trace_event_raw_sys_enter *ctx) {
     return 0;
 }
 
+// Handle process forking
+SEC("tracepoint/sched/sched_process_fork")
+int trace_sched_process_fork(struct trace_event_raw_sched_process_fork *ctx) {
+    // Reserve space in the ringbuffer
+    struct process_event *evt;
+    evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
+    if (!evt) {
+        return 0;
+    }
+    
+    // Fill in basic info
+    evt->event_type = EVENT_PROCESS_FORK; // New event type
+    evt->pid = ctx->child_pid;
+    evt->ppid = ctx->parent_pid;
+    evt->timestamp = bpf_ktime_get_ns();
+    
+    // Get child and parent comm from the context
+    bpf_probe_read_kernel_str(&evt->comm, sizeof(evt->comm), ctx->child_comm);
+    bpf_probe_read_kernel_str(&evt->parent_comm, sizeof(evt->parent_comm), ctx->parent_comm);
+    
+    // Get UIDs - this is the parent's UID/GID
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    evt->uid = uid_gid & 0xffffffff;
+    evt->gid = uid_gid >> 32;
+    
+    // Initialize other fields
+    evt->exit_code = 0;
+    evt->flags = 0;
+    
+    // Submit the event
+    bpf_ringbuf_submit(evt, 0);
+    
+    return 0;
+}
+
 // Handle process exit
 SEC("tracepoint/sched/sched_process_exit") 
 int trace_sched_process_exit(struct trace_event_raw_sched_process_template *ctx) {
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    if (!task) {
+        return 0;
+    }
+    
+    // Get both TGID and PID
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tgid = pid_tgid >> 32;
+    __u32 pid = pid_tgid & 0xFFFFFFFF;
+    
+    // Only generate event if this is the main thread (pid == tgid)
+    // and the thread group is empty (indicating whole process is exiting)
+    if (pid != tgid) {
+        return 0;
+    }
+    
     // Reserve space in the ringbuffer
     struct process_event *evt;
     evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
@@ -147,7 +198,6 @@ int trace_sched_process_exit(struct trace_event_raw_sched_process_template *ctx)
     
     // Fill in basic info
     evt->event_type = EVENT_PROCESS_EXIT;
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
     evt->pid = pid;
     evt->timestamp = bpf_ktime_get_ns();
     bpf_get_current_comm(&evt->comm, sizeof(evt->comm));
@@ -163,7 +213,6 @@ int trace_sched_process_exit(struct trace_event_raw_sched_process_template *ctx)
     evt->flags = 0;
     
     // Get exit code from task
-    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     if (task) {
         evt->exit_code = BPF_CORE_READ(task, exit_code) >> 8;
     }

@@ -7,7 +7,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -96,6 +95,8 @@ func handleProcessEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 		handleProcessExecEvent(event, bpfObjs)
 	} else if event.EventType == types.EVENT_PROCESS_EXIT {
 		handleProcessExitEvent(event)
+	} else if event.EventType == types.EVENT_PROCESS_FORK {
+		handleProcessForkEvent(event)
 	}
 }
 
@@ -115,19 +116,20 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	}
 
 	// Debug log for event details
-	globalLogger.Trace("process", "Processing EXEC event for PID %d\n", event.Pid)
+	globalLogger.Trace("process", "Processing EXIT event for PID %d\n", event.Pid)
 	globalLogger.Trace("process", "BPF data - Comm: %s, UID: %d, GID: %d\n",
 		string(bytes.TrimRight(event.Comm[:], "\x00")),
 		event.Uid,
 		event.Gid)
 
 	info := &types.ProcessInfo{
-		PID:      event.Pid,
-		Comm:     comm,
-		UID:      event.Uid,
-		GID:      event.Gid,
-		ExitCode: event.ExitCode,
-		ExitTime: exitTime,
+		PID:       event.Pid,
+		Comm:      comm,
+		UID:       event.Uid,
+		GID:       event.Gid,
+		ExitCode:  event.ExitCode,
+		ExitTime:  exitTime,
+		EventType: "exit",
 	}
 
 	if cachedInfo, exists := GetProcessFromCache(event.Pid); exists {
@@ -185,38 +187,199 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	processCacheLock.Unlock()
 }
 
-func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
-	// Debug log for event details
-	globalLogger.Trace("process", "Processing EXEC event for PID %d\n", event.Pid)
+func handleProcessForkEvent(event *types.ProcessEvent) {
+	// Debug logging
+	globalLogger.Trace("process", "Processing FORK event for PID %d\n", event.Pid)
 
-	// Log raw BPF data
-	globalLogger.Trace("process", "BPF data - Comm: %s, Parent: %s, UID: %d, GID: %d\n",
-		string(bytes.TrimRight(event.Comm[:], "\x00")),
-		string(bytes.TrimRight(event.ParentComm[:], "\x00")),
-		event.Uid,
-		event.Gid)
+	// Create basic info from kernel event
+	info := &types.ProcessInfo{
+		PID:        event.Pid,
+		PPID:       event.Ppid,
+		Comm:       string(bytes.TrimRight(event.Comm[:], "\x00")),
+		ParentComm: string(bytes.TrimRight(event.ParentComm[:], "\x00")),
+		UID:        event.Uid,
+		GID:        event.Gid,
+		StartTime:  BpfTimestampToTime(event.Timestamp),
+		EventType:  "fork",
+	}
 
-	// try to get cmdline from BPF map first
-	var kernelCmdLine string
-	if bpfObjs != nil {
-		if cmdline, err := LookupCmdline(bpfObjs, event.Pid); err == nil {
-			globalLogger.Trace("process", "Phase 1 - Got cmdline from BPF for PID %d: %s\n", event.Pid, cmdline)
-			kernelCmdLine = cmdline
-		} else {
-			globalLogger.Trace("process", "Phase 1 - Failed to get cmdline from BPF for PID %d: %v\n", event.Pid, err)
+	// Get parent info
+	var parentInfo *types.ProcessInfo
+	var parentExists bool
+
+	// Try up to 10 times with 5ms delay (50ms total max)
+	for i := 0; i < 10; i++ {
+		parentInfo, parentExists = GetProcessFromCache(event.Ppid)
+		if parentExists {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// If parent found, inherit its properties
+	if parentExists {
+		InheritFromParent(info, parentInfo) // New helper
+	} else {
+		// Try to find and cache parent
+		parentInfo = findAndCacheParentProcess(event.Ppid)
+		if parentInfo != nil {
+			parentExists = true
+			InheritFromParent(info, parentInfo)
 		}
 	}
 
-	// Enrich the process event with additional information and save to the cache
-	enrichedInfo := EnrichProcessEvent(event, kernelCmdLine) // Pass the cmdline we already looked up
-	AddOrUpdateProcessCache(event.Pid, enrichedInfo)
+	// Apply standard enrichment and finalization
+	CompleteProcessInfo(info)
 
+	// Add to process cache
+	AddOrUpdateProcessCache(event.Pid, info)
+
+	// Add to process tree if exists
 	if globalEngine != nil {
-		globalEngine.processTree.AddProcess(enrichedInfo)
+		globalEngine.processTree.AddProcess(info)
 	}
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
-	if globalEngine != nil && !globalEngine.ShouldLog(enrichedInfo) {
+	if globalEngine != nil && !globalEngine.ShouldLog(info) {
+		return
+	}
+
+	// Log to console with enhanced information
+	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
+
+	// Build the message using strings.Builder - same pattern as handleProcessExecEvent
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "FORK: PID=%d comm=%s ProcessUID=%s\n", info.PID, info.Comm, info.ProcessUID)
+	fmt.Fprintf(&msg, "      Parent: [%d] %s\n", info.PPID, parentComm)
+	fmt.Fprintf(&msg, "      User: %s (%d/%d)\n", info.Username, info.UID, info.GID)
+
+	if info.ExePath != "" {
+		fmt.Fprintf(&msg, "      Path: %s", info.ExePath)
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	if info.WorkingDir != "" {
+		fmt.Fprintf(&msg, "\n      CWD: %s", info.WorkingDir)
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	if info.CmdLine != "" {
+		fmt.Fprintf(&msg, "\n      Command: %s", sanitizeCommandLine(info.CmdLine))
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	if info.ContainerID != "" && info.ContainerID != "-" {
+		fmt.Fprintf(&msg, "\n      Container: %s", info.ContainerID)
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	globalLogger.Info("process", "%s", msg.String())
+
+	// BUG:  This is NOT handling FORK-EXEC well.  Need to optimize this!!
+	// Log to file with proper structured format if logger is available
+	if globalLogger != nil {
+		if !parentExists {
+			// Create an empty parent info object if parent wasn't found
+			parentInfo = &types.ProcessInfo{}
+		}
+		globalLogger.LogProcess(event, info, parentInfo)
+	}
+
+	// If Sigma detection is enabled, submit event - same as handleProcessExecEvent
+	if globalSigmaEngine != nil {
+		// Include core fields needed for Sigma rule matching
+		sigmaEvent := map[string]interface{}{
+			"Image":            info.ExePath,
+			"CmdLine":          info.CmdLine,
+			"ProcessName":      info.Comm,
+			"ParentProcessId":  info.PPID,
+			"User":             info.Username,
+			"CurrentDirectory": info.WorkingDir,
+			"EventType":        "fork",
+		}
+
+		// Create detection event
+		detectionEvent := DetectionEvent{
+			EventType:       "process_creation",
+			Data:            sigmaEvent,
+			Timestamp:       BpfTimestampToTime(event.Timestamp),
+			ProcessUID:      info.ProcessUID,
+			PID:             info.PID,
+			DetectionSource: "process_creation",
+		}
+
+		// Submit non-blocking
+		globalSigmaEngine.SubmitEvent(detectionEvent)
+	}
+}
+
+func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
+	// Debug logging
+	globalLogger.Trace("process", "Processing EXEC event for PID %d\n", event.Pid)
+
+	// Create basic info from kernel event
+	info := &types.ProcessInfo{
+		PID:        event.Pid,
+		PPID:       event.Ppid,
+		Comm:       string(bytes.TrimRight(event.Comm[:], "\x00")),
+		ParentComm: string(bytes.TrimRight(event.ParentComm[:], "\x00")),
+		UID:        event.Uid,
+		GID:        event.Gid,
+		StartTime:  BpfTimestampToTime(event.Timestamp),
+		EventType:  "exec",
+	}
+
+	// Get executable path from kernel data if available
+	if len(event.ExePath) > 0 {
+		kernelExePath := string(bytes.TrimRight(event.ExePath[:], "\x00"))
+		if kernelExePath != "" {
+			info.ExePath = kernelExePath
+			globalLogger.Trace("process", "PID %d: Got ExePath from BPF: [%v]\n", event.Pid, info.ExePath)
+		}
+	}
+
+	// Get command line from BPF map if available
+	if bpfObjs != nil {
+		if cmdline, err := LookupCmdline(bpfObjs, event.Pid); err == nil && cmdline != "" {
+			info.CmdLine = cmdline
+			globalLogger.Trace("process", "PID %d: Got CmdLine from BPF: [%v]\n", event.Pid, info.CmdLine)
+		}
+	}
+
+	// First /proc check - may catch the process before exec is complete
+	firstProcInfo := CollectProcMetadata(event.Pid)
+	MergeProcessInfo(info, firstProcInfo, "first")
+
+	// Set username based on current UID
+	info.Username = GetUsernameFromUID(info.UID)
+
+	// Wait briefly for exec to complete
+	time.Sleep(2 * time.Millisecond)
+
+	// Second /proc check - this should have the final state
+	secondProcInfo := CollectProcMetadata(event.Pid)
+	MergeProcessInfo(info, secondProcInfo, "second")
+
+	// Apply standard enrichment and finalization
+	CompleteProcessInfo(info)
+
+	// Add to process cache
+	AddOrUpdateProcessCache(event.Pid, info)
+
+	if globalEngine != nil {
+		globalEngine.processTree.AddProcess(info)
+	}
+
+	// Filter check AFTER enrichment and cache updates, but BEFORE logging
+	if globalEngine != nil && !globalEngine.ShouldLog(info) {
 		return
 	}
 
@@ -225,18 +388,18 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 
 	// Build the message using strings.Builder
 	var msg strings.Builder
-	fmt.Fprintf(&msg, "EXEC: PID=%d comm=%s ProcessUID=%s\n", enrichedInfo.PID, enrichedInfo.Comm, enrichedInfo.ProcessUID)
-	fmt.Fprintf(&msg, "      Parent: [%d] %s\n", enrichedInfo.PPID, parentComm)
-	fmt.Fprintf(&msg, "      User: %s (%d/%d)\n", enrichedInfo.Username, enrichedInfo.UID, enrichedInfo.GID)
-	fmt.Fprintf(&msg, "      Path: %s", enrichedInfo.ExePath)
-	if enrichedInfo.WorkingDir != "" {
-		fmt.Fprintf(&msg, "\n      CWD: %s", enrichedInfo.WorkingDir)
+	fmt.Fprintf(&msg, "EXEC: PID=%d comm=%s ProcessUID=%s\n", info.PID, info.Comm, info.ProcessUID)
+	fmt.Fprintf(&msg, "      Parent: [%d] %s\n", info.PPID, parentComm)
+	fmt.Fprintf(&msg, "      User: %s (%d/%d)\n", info.Username, info.UID, info.GID)
+	fmt.Fprintf(&msg, "      Path: %s", info.ExePath)
+	if info.WorkingDir != "" {
+		fmt.Fprintf(&msg, "\n      CWD: %s", info.WorkingDir)
 	}
-	if enrichedInfo.CmdLine != "" {
-		fmt.Fprintf(&msg, "\n      Command: %s", sanitizeCommandLine(enrichedInfo.CmdLine))
+	if info.CmdLine != "" {
+		fmt.Fprintf(&msg, "\n      Command: %s", sanitizeCommandLine(info.CmdLine))
 	}
-	if enrichedInfo.ContainerID != "" && enrichedInfo.ContainerID != "-" {
-		fmt.Fprintf(&msg, "\n      Container: %s", enrichedInfo.ContainerID)
+	if info.ContainerID != "" && info.ContainerID != "-" {
+		fmt.Fprintf(&msg, "\n      Container: %s", info.ContainerID)
 	}
 
 	globalLogger.Info("process", "%s", msg.String())
@@ -245,24 +408,33 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
 		parentinfo = pinfo
 	} else {
-		parentinfo = &types.ProcessInfo{}
+		// Try to find and cache the missing parent
+		parentinfo = findAndCacheParentProcess(event.Ppid)
+		if parentinfo == nil {
+			// If still not found, create minimal version
+			parentinfo = &types.ProcessInfo{
+				PID:  event.Ppid,
+				Comm: string(bytes.TrimRight(event.ParentComm[:], "\x00")),
+			}
+		}
 	}
 
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {
-		globalLogger.LogProcess(event, enrichedInfo, parentinfo)
+		globalLogger.LogProcess(event, info, parentinfo)
 	}
 
 	// If Sigma detection is enabled, submit event
 	if globalSigmaEngine != nil {
 		// Include core fields needed for Sigma rule matching
 		sigmaEvent := map[string]interface{}{
-			"Image":            enrichedInfo.ExePath,
-			"CmdLine":          enrichedInfo.CmdLine,
-			"ProcessName":      enrichedInfo.Comm,
-			"ParentProcessId":  enrichedInfo.PPID,
-			"User":             enrichedInfo.Username,
-			"CurrentDirectory": enrichedInfo.WorkingDir,
+			"Image":            info.ExePath,
+			"CmdLine":          info.CmdLine,
+			"ProcessName":      info.Comm,
+			"ParentProcessId":  info.PPID,
+			"User":             info.Username,
+			"CurrentDirectory": info.WorkingDir,
+			"EventType":        "exec",
 		}
 
 		// Create detection event
@@ -270,8 +442,8 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 			EventType:       "process_creation",
 			Data:            sigmaEvent,
 			Timestamp:       BpfTimestampToTime(event.Timestamp),
-			ProcessUID:      enrichedInfo.ProcessUID,
-			PID:             enrichedInfo.PID,
+			ProcessUID:      info.ProcessUID,
+			PID:             info.PID,
 			DetectionSource: "process_creation",
 		}
 
@@ -351,70 +523,270 @@ func GetUsernameFromUID(uid uint32) string {
 	return ""
 }
 
-// CollectProcMetadata gathers information about a process from /proc
+// Merge information into baseInfo with awareness of execution phases
+func MergeProcessInfo(baseInfo *types.ProcessInfo, procInfo *types.ProcessInfo, phase string) {
+	// Handle ExePath merging
+	if procInfo.ExePath != "" {
+		if baseInfo.ExePath == "" {
+			// If we don't have an ExePath yet, use anything we can get
+			globalLogger.Trace("process", "PID %d: Adding ExePath from %s check: [%v]\n",
+				baseInfo.PID, phase, procInfo.ExePath)
+			baseInfo.ExePath = procInfo.ExePath
+
+		} else if baseInfo.ExePath == procInfo.ExePath {
+			// Both are the same, nothing to do
+			globalLogger.Trace("process", "PID %d: %s check ExePath matches existing: [%v]\n",
+				baseInfo.PID, phase, baseInfo.ExePath)
+		} else if (len(baseInfo.ExePath) > 60) && (len(procInfo.ExePath) > len(baseInfo.ExePath)) {
+			// BPF ExePath might be truncated (64 byte limit)
+			if strings.HasPrefix(procInfo.ExePath, baseInfo.ExePath[:60]) {
+				globalLogger.Trace("process", "PID %d: Replacing truncated ExePath with %s check: [%v] -> [%v]\n",
+					baseInfo.PID, phase, baseInfo.ExePath, procInfo.ExePath)
+				baseInfo.ExePath = procInfo.ExePath
+			} else {
+				globalLogger.Trace("process", "PID %d: %s check ExePath doesn't share prefix with current, keeping current: [%v] vs [%v]\n",
+					baseInfo.PID, phase, baseInfo.ExePath, procInfo.ExePath)
+			}
+		} else if phase == "second" {
+			// For second phase, prefer /proc data for a more complete picture
+			globalLogger.Trace("process", "PID %d: Updating ExePath from second check: [%v] -> [%v]\n",
+				baseInfo.PID, baseInfo.ExePath, procInfo.ExePath)
+			baseInfo.ExePath = procInfo.ExePath
+
+		} else {
+			// For first phase, trust BPF data over /proc
+			globalLogger.Trace("process", "PID %d: Keeping BPF ExePath over first check data: [%v] vs [%v]\n",
+				baseInfo.PID, baseInfo.ExePath, procInfo.ExePath)
+		}
+	}
+
+	// Handle CmdLine merging with similar logic
+	if procInfo.CmdLine != "" {
+		if baseInfo.CmdLine == "" {
+			// If we don't have a CmdLine yet, use anything we can get
+			globalLogger.Trace("process", "PID %d: Adding CmdLine from %s check: [%v]\n",
+				baseInfo.PID, phase, procInfo.CmdLine)
+			baseInfo.CmdLine = procInfo.CmdLine
+
+		} else if baseInfo.CmdLine == procInfo.CmdLine {
+			// Both are the same, nothing to do
+			globalLogger.Trace("process", "PID %d: %s check CmdLine matches existing: [%v]\n",
+				baseInfo.PID, phase, baseInfo.CmdLine)
+		} else if len(procInfo.CmdLine) > len(baseInfo.CmdLine) {
+			// BPF CmdLine is often truncated or incomplete
+			if len(baseInfo.CmdLine) > 15 && strings.HasPrefix(procInfo.CmdLine, baseInfo.CmdLine[:15]) {
+				globalLogger.Trace("process", "PID %d: Replacing truncated CmdLine with %s check: [%v] -> [%v]\n",
+					baseInfo.PID, phase, baseInfo.CmdLine, procInfo.CmdLine)
+				baseInfo.CmdLine = procInfo.CmdLine
+
+			} else if strings.Contains(procInfo.CmdLine, baseInfo.CmdLine) {
+				globalLogger.Trace("process", "PID %d: Replacing partial CmdLine with %s check: [%v] -> [%v]\n",
+					baseInfo.PID, phase, baseInfo.CmdLine, procInfo.CmdLine)
+				baseInfo.CmdLine = procInfo.CmdLine
+
+			} else if phase == "second" {
+				// For second phase, prefer the longer command line
+				globalLogger.Trace("process", "PID %d: Updating CmdLine from second check: [%v] -> [%v]\n",
+					baseInfo.PID, baseInfo.CmdLine, procInfo.CmdLine)
+				baseInfo.CmdLine = procInfo.CmdLine
+
+			} else {
+				globalLogger.Trace("process", "PID %d: %s check CmdLine doesn't share prefix, keeping current: [%v] vs [%v]\n",
+					baseInfo.PID, phase, baseInfo.CmdLine, procInfo.CmdLine)
+			}
+		} else {
+			globalLogger.Trace("process", "PID %d: Current CmdLine longer than %s check: [%v] vs [%v]\n",
+				baseInfo.PID, phase, baseInfo.CmdLine, procInfo.CmdLine)
+		}
+	}
+
+	// For other fields, always take from proc if missing, and prefer second proc check
+	if baseInfo.WorkingDir == "" || (phase == "second" && procInfo.WorkingDir != "") {
+		baseInfo.WorkingDir = procInfo.WorkingDir
+	}
+
+	if baseInfo.PPID == 0 && procInfo.PPID > 0 {
+		baseInfo.PPID = procInfo.PPID
+	}
+
+	if baseInfo.UID == 0 && procInfo.UID > 0 {
+		baseInfo.UID = procInfo.UID
+	}
+
+	if baseInfo.GID == 0 && procInfo.GID > 0 {
+		baseInfo.GID = procInfo.GID
+	}
+
+	if len(procInfo.Environment) > 0 && (len(baseInfo.Environment) == 0 || phase == "second") {
+		baseInfo.Environment = procInfo.Environment
+	}
+
+	if procInfo.ContainerID != "" && (baseInfo.ContainerID == "" || phase == "second") {
+		baseInfo.ContainerID = procInfo.ContainerID
+	}
+}
+
+// Inherit properties from parent for fork events
+func InheritFromParent(info, parentInfo *types.ProcessInfo) {
+	info.ExePath = parentInfo.ExePath
+	info.CmdLine = parentInfo.CmdLine
+	info.WorkingDir = parentInfo.WorkingDir
+	info.Username = parentInfo.Username
+	info.ContainerID = parentInfo.ContainerID
+	info.BinaryHash = parentInfo.BinaryHash
+	info.Environment = parentInfo.Environment
+	info.ParentComm = parentInfo.Comm
+
+	// Use parent's values only if child doesn't have them
+	if info.UID == 0 && parentInfo.UID != 0 {
+		info.UID = parentInfo.UID
+	}
+	if info.GID == 0 && parentInfo.GID != 0 {
+		info.GID = parentInfo.GID
+	}
+}
+
+func findAndCacheParentProcess(ppid uint32) *types.ProcessInfo {
+	// Check if already in cache
+	if info, exists := GetProcessFromCache(ppid); exists {
+		return info
+	}
+
+	// Special case for PID 2
+	if ppid == 2 {
+		info := &types.ProcessInfo{
+			PID:        2,
+			ParentComm: "swapper/0",
+			EventType:  "exec",
+		}
+		CompleteProcessInfo(info)
+		AddOrUpdateProcessCache(2, info)
+		return info
+	}
+
+	// Regular process
+	info := CollectProcMetadata(ppid)
+	if info != nil && (info.ExePath != "" || info.CmdLine != "") {
+		// Explicitly set ParentComm from /proc if available
+		if info.ParentComm == "" && info.PPID > 0 {
+			parentProcDir := fmt.Sprintf("/proc/%d", info.PPID)
+			if _, err := os.Stat(parentProcDir); err == nil {
+				if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", parentProcDir)); err == nil {
+					info.ParentComm = strings.TrimSpace(string(commBytes))
+				}
+			}
+		}
+
+		// Apply standard enrichment and finalization
+		CompleteProcessInfo(info)
+		AddOrUpdateProcessCache(ppid, info)
+		return info
+	}
+
+	return nil
+}
+
+// Core process information collection - keep it minimal and fast
 func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 	info := &types.ProcessInfo{
 		PID: pid,
 	}
 
 	procDir := fmt.Sprintf("/proc/%d", pid)
-
-	// Check if process still exists
 	if _, err := os.Stat(procDir); os.IsNotExist(err) {
-		globalLogger.Trace("process", "PID %d - /proc entry doesn't exist\n", pid)
 		return info
 	}
 
-	// Get executable path
+	// Get only the basic fields needed from /proc
 	if exePath, err := os.Readlink(fmt.Sprintf("%s/exe", procDir)); err == nil {
-		globalLogger.Trace("process", "PID %d - Got exe path from /proc: %s\n", pid, exePath)
 		info.ExePath = exePath
-	} else {
-		globalLogger.Trace("process", "PID %d - Failed to read exe path from /proc: %v\n", pid, err)
 	}
 
-	// Get command line with proper null-byte handling
 	if cmdlineBytes, err := os.ReadFile(fmt.Sprintf("%s/cmdline", procDir)); err == nil && len(cmdlineBytes) > 0 {
-		if len(cmdlineBytes) == 0 {
-			globalLogger.Trace("process", "PID %d - /proc cmdline file was empty\n", pid)
-		} else if cmdlineBytes[0] == 0 {
-			globalLogger.Trace("process", "PID %d - /proc cmdline starts with null byte\n", pid)
-		} else {
-
-			args := bytes.Split(cmdlineBytes, []byte{0})
-			var cmdArgs []string
-			for _, arg := range args {
-				if len(arg) > 0 {
-					cmdArgs = append(cmdArgs, string(arg))
-				}
-			}
-			if len(cmdArgs) > 0 {
-				info.CmdLine = strings.Join(cmdArgs, " ")
-				globalLogger.Trace("process", "PID %d - Got cmdline from /proc: %s\n", pid, info.CmdLine)
+		args := bytes.Split(cmdlineBytes, []byte{0})
+		var cmdArgs []string
+		for _, arg := range args {
+			if len(arg) > 0 {
+				cmdArgs = append(cmdArgs, string(arg))
 			}
 		}
-	} else {
-		globalLogger.Trace("process", "PID %d - Failed to read cmdline from /proc: %v\n", pid, err)
+		if len(cmdArgs) > 0 {
+			info.CmdLine = strings.Join(cmdArgs, " ")
+		}
 	}
 
-	// Get initial working directory
 	if cwd, err := os.Readlink(fmt.Sprintf("%s/cwd", procDir)); err == nil {
-		globalLogger.Trace("process", "PID %d - Got working dir from /proc: %s\n", pid, cwd)
 		info.WorkingDir = cwd
-	} else {
-		globalLogger.Trace("process", "PID %d - Failed to read working dir from /proc: %v\n", pid, err)
 	}
 
-	// Get environment variables
-	if env, err := getProcessEnvironment(pid); err == nil {
-		globalLogger.Debug("process", "PID %d - Successfully read %d environment variables\n", pid, len(env))
-		info.Environment = env
-	} else {
-		globalLogger.Debug("process", "PID %d - Failed to read environment: %v\n", pid, err)
+	// Extract UID/GID/PPID from status
+	if statusData, err := os.ReadFile(fmt.Sprintf("%s/status", procDir)); err == nil {
+		lines := strings.Split(string(statusData), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "Uid:") {
+				fields := strings.Fields(line)
+				if len(fields) > 1 {
+					if uid, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+						info.UID = uint32(uid)
+					}
+				}
+			} else if strings.HasPrefix(line, "Gid:") {
+				fields := strings.Fields(line)
+				if len(fields) > 1 {
+					if gid, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+						info.GID = uint32(gid)
+					}
+				}
+			} else if strings.HasPrefix(line, "PPid:") {
+				fields := strings.Fields(line)
+				if len(fields) > 1 {
+					if ppid, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+						info.PPID = uint32(ppid)
+					}
+				}
+			}
+		}
 	}
 
-	// Check for container ID
+	return info
+}
+
+// Enrich a process with additional metadata (username, container, etc.)
+func EnrichProcessInfo(info *types.ProcessInfo) {
+	// Skip enrichment for special kernel processes
+	if info.PID == 2 {
+		info.Comm = "kthreadd"
+		info.ExePath = "[kernel]"
+		info.WorkingDir = "/"
+		info.Username = "root"
+		info.UID = 0
+		info.GID = 0
+		info.PPID = 0
+		info.ParentComm = "swapper/0"
+		info.StartTime = BootTime
+		return
+	}
+
+	// Set username from UID
+	if info.Username == "" && info.UID > 0 {
+		info.Username = GetUsernameFromUID(info.UID)
+	}
+
+	// Set command name if not already set
+	if info.Comm == "" && info.ExePath != "" {
+		info.Comm = filepath.Base(info.ExePath)
+	}
+
+	// Get environment variables if not already set
+	if len(info.Environment) == 0 {
+		if env, err := getProcessEnvironment(info.PID); err == nil {
+			info.Environment = env
+		}
+	}
+
+	// Get container ID if not already set
 	if info.ContainerID == "" {
+		procDir := fmt.Sprintf("/proc/%d", info.PID)
 		if cgroupData, err := os.ReadFile(fmt.Sprintf("%s/cgroup", procDir)); err == nil {
 			lines := strings.Split(string(cgroupData), "\n")
 			for _, line := range lines {
@@ -423,7 +795,6 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 					for i := len(parts) - 1; i >= 0; i-- {
 						part := parts[i]
 						if containerIDRegex.MatchString(part) {
-							globalLogger.Debug("process", "PID %d - Found container ID: %s\n", pid, part)
 							info.ContainerID = part
 							break
 						}
@@ -433,11 +804,55 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 					}
 				}
 			}
-		} else {
-			globalLogger.Trace("process", "PID %d - Failed to read cgroup info: %v\n", pid, err)
 		}
 	}
 
+	// Get parent command if not already set
+	if info.ParentComm == "" && info.PPID > 0 {
+		parentProcDir := fmt.Sprintf("/proc/%d", info.PPID)
+		if _, err := os.Stat(parentProcDir); err == nil {
+			if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", parentProcDir)); err == nil {
+				info.ParentComm = strings.TrimSpace(string(commBytes))
+			}
+		}
+	}
+}
+
+// Finalize a process with UIDs and hashes
+func FinalizeProcessInfo(info *types.ProcessInfo) {
+	// Calculate hash if enabled and not already set
+	if globalEngine != nil && globalEngine.config.HashBinaries &&
+		info.BinaryHash == "" && info.ExePath != "" && info.ExePath != "[kernel]" {
+		if hash, err := CalculateMD5(info.ExePath); err == nil {
+			info.BinaryHash = hash
+		}
+	}
+
+	// Set start time if not already set
+	if info.StartTime.IsZero() {
+		if stat, err := os.Stat(fmt.Sprintf("/proc/%d", info.PID)); err == nil {
+			info.StartTime = stat.ModTime()
+		} else {
+			// Use current time as fallback
+			info.StartTime = time.Now()
+		}
+	}
+
+	// Calculate ProcessUID if not already set
+	if info.ProcessUID == "" {
+		h := fnv.New32a()
+		h.Write([]byte(fmt.Sprintf("%s-%d", info.StartTime.Format(time.RFC3339Nano), info.PID)))
+		if info.ExePath != "" {
+			h.Write([]byte(info.ExePath))
+		}
+		info.ProcessUID = fmt.Sprintf("%x", h.Sum32())
+	}
+}
+
+// The main function that takes a process through all stages
+func CompleteProcessInfo(info *types.ProcessInfo) *types.ProcessInfo {
+	EnrichProcessInfo(info)
+	FinalizeProcessInfo(info)
 	return info
 }
 
@@ -459,208 +874,6 @@ func getProcessEnvironment(pid uint32) ([]string, error) {
 
 	// Split on null bytes
 	return strings.Split(data, "\x00"), nil
-}
-
-// EnrichProcessEvent adds additional information to a process event from /proc
-func EnrichProcessEvent(event *types.ProcessEvent, kernelCmdLine string) *types.ProcessInfo {
-	pid := event.Pid
-
-	// Get the basics from the kernel event
-	//  This is the master ProcessInfo we are going to return
-	//  We merge values from kernel mode BPF and two separate usermode /proc lookups
-	info := &types.ProcessInfo{
-		PID:      pid,
-		PPID:     event.Ppid,
-		Comm:     string(bytes.TrimRight(event.Comm[:], "\x00")),
-		UID:      event.Uid,
-		GID:      event.Gid,
-		ExitCode: event.ExitCode,
-	}
-
-	if event.EventType == types.EVENT_PROCESS_EXIT {
-		// For EXIT events, set the exit time using the event timestamp from kernelmode and return immediately
-		info.ExitTime = BpfTimestampToTime(event.Timestamp)
-		return info
-
-	} else if event.EventType == types.EVENT_PROCESS_EXEC {
-		// For EXEC events, set the start time using the event timestamp from kernelmode
-		info.StartTime = BpfTimestampToTime(event.Timestamp)
-
-		// Use the kernel cmdline we already looked up if available
-		if kernelCmdLine != "" {
-			info.CmdLine = kernelCmdLine
-		}
-
-		// Get executable path from kernel data if available
-		var kernelExePath string
-		if len(event.ExePath) > 0 {
-			kernelExePath = string(bytes.TrimRight(event.ExePath[:], "\x00"))
-			if kernelExePath != "" {
-				info.ExePath = kernelExePath
-			}
-		}
-
-		// Get parent process command
-		if len(event.ParentComm) > 0 {
-			parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
-			if parentComm != "" {
-				// Could store in the ProcessInfo if needed
-			}
-		}
-
-		info.Username = GetUsernameFromUID(info.UID)
-
-		globalLogger.Trace("process", "%d: BPF kernel data: [%v] [%v]\n", pid, info.CmdLine, info.ExePath)
-
-		// Phase 2: First proc check
-
-		firstProcInfo := CollectProcMetadata(pid)
-
-		var exe_path_match, cmd_line_match bool
-		if firstProcInfo.ExePath != "" {
-			if info.ExePath == "" {
-				// anything is better than nothing
-				info.ExePath = firstProcInfo.ExePath
-				globalLogger.Trace("process", "%d: Replacing blank BPF ExePath with /proc ExePath: [%v]\n", pid, info.ExePath)
-			} else if info.ExePath == firstProcInfo.ExePath {
-				globalLogger.Trace("process", "%d: BPF and /proc ExePath both same: [%v]\n", pid, info.ExePath)
-				exe_path_match = true
-			} else if (len(info.ExePath) > 60) && (len(firstProcInfo.ExePath) > len(info.ExePath)) {
-				// BPF ExePath is max 64 bytes so it could get truncated
-				// Dont even consider /proc exepath unless there's a chance BPF exepath was truncated
-				if strings.HasPrefix(firstProcInfo.ExePath, info.ExePath[:60]) {
-					globalLogger.Trace("process", "%d: Replacing truncated BPF ExePath with /proc ExePath: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
-					info.ExePath = firstProcInfo.ExePath
-				} else {
-					globalLogger.Trace("process", "%d: BPF ExePath does not share common prefix with /proc ExePath, trusting BPF: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
-				}
-			} else {
-				globalLogger.Trace("process", "%d: Trusting BPF ExePath over /proc ExePath: [%v] [%v]\n", pid, info.ExePath, firstProcInfo.ExePath)
-			}
-		}
-
-		if firstProcInfo.CmdLine != "" {
-			if info.CmdLine == "" {
-				// anything is better than nothing
-				info.CmdLine = firstProcInfo.CmdLine
-				globalLogger.Trace("process", "%d: Replacing BLANK BPF CmdLine with /proc CmdLine: [%v]\n", pid, info.CmdLine)
-			} else if info.CmdLine == firstProcInfo.CmdLine {
-				globalLogger.Trace("process", "%d: BPF and /proc CmdLine both same: [%v]\n", pid, info.CmdLine)
-				cmd_line_match = true
-			} else if len(firstProcInfo.CmdLine) > len(info.CmdLine) {
-				// BPF CmdLine is VERY limited and each arg could be truncated
-				if len(info.CmdLine) > 15 && strings.HasPrefix(firstProcInfo.CmdLine, info.CmdLine[:15]) {
-					// example:
-					// DEBUG 2 2835509: Replacing truncated BPF CmdLine with /proc CmdLine: [curl -s --max-time] [curl -s --max-time 5 -H X-aws-ec2-metadata-token:AQAEAAN_7UhbnrPmG1anTPFbytQG7zQEe171jxkYvdZsVrw8CrT3cQ== -f http://169.254.169.254/latest/meta-data/mac]
-					globalLogger.Trace("process", "%d: Replacing truncated BPF CmdLine with /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
-					info.CmdLine = firstProcInfo.CmdLine
-				} else if strings.Contains(firstProcInfo.CmdLine, info.CmdLine) {
-					// example:
-					// DEBUG 2 2835803: Replacing partial BPF CmdLine with /proc CmdLine: [/usr/bin/setup-policy-routes ens5 refresh] [/usr/bin/bash /usr/bin/setup-policy-routes ens5 refresh]
-
-					globalLogger.Trace("process", "%d: Replacing partial BPF CmdLine with /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
-					info.CmdLine = firstProcInfo.CmdLine
-				} else {
-					globalLogger.Trace("process", "%d: BPF CmdLine does not share common prefix with /proc CmdLine, trusting BPF: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
-				}
-			} else {
-				globalLogger.Trace("process", "%d: BPF CmdLine is longer than /proc CmdLine: [%v] [%v]\n", pid, info.CmdLine, firstProcInfo.CmdLine)
-			}
-		}
-
-		// these values only come from /proc metadata, not from kernel mode BPF so take whatever first proc gives us
-		info.WorkingDir = firstProcInfo.WorkingDir
-		info.Environment = firstProcInfo.Environment
-		info.ContainerID = firstProcInfo.ContainerID
-
-		// Wait briefly for exec to complete
-		time.Sleep(2 * time.Millisecond)
-
-		// Second collection after exec should be complete
-		secondProcInfo := CollectProcMetadata(pid)
-
-		if secondProcInfo.ExePath != "" {
-			if info.ExePath == secondProcInfo.ExePath || exe_path_match {
-				// ignore
-			} else if info.ExePath != kernelExePath {
-				// trust secondProcInfo ExePath more than firstProcInfo
-				globalLogger.Trace("process", "%d: Replacing first /proc ExePath: [%v] [%v]\n", pid, info.ExePath, secondProcInfo.ExePath)
-				info.ExePath = secondProcInfo.ExePath
-			} else if (len(info.ExePath) > 60) && (len(secondProcInfo.ExePath) > len(info.ExePath)) {
-				// BPF ExePath might have been truncated..
-				globalLogger.Trace("process", "%d: Replacing BPF ExePath: [%v] [%v]\n", pid, info.ExePath, secondProcInfo.ExePath)
-				info.ExePath = secondProcInfo.ExePath
-			} else {
-				// otherwise, use existing BPF exepath
-			}
-		}
-
-		if secondProcInfo.CmdLine != "" {
-			if info.CmdLine == secondProcInfo.CmdLine || cmd_line_match {
-				// ignore
-			} else {
-				// for now, lets try trusting the later /proc command line and evaluate
-				// example:
-				// DEBUG 3 2835418: Replacing CmdLine: [/usr/bin/sed -r -e] [/usr/bin/sed -r -e s/^[[:blank:]]*([[:upper:]_]+)=([[:print:][:digit:]\._-]+|"[[:print:][:digit:]\._-]+")/export \1=\2/;t;d /etc/locale.conf]
-				globalLogger.Trace("process", "%d: Replacing CmdLine: [%v] [%v]\n", pid, info.CmdLine, secondProcInfo.CmdLine)
-				info.CmdLine = secondProcInfo.CmdLine
-			}
-		}
-
-		// use secondProcInfo if it exists for the other values
-		//  no debug prints because its less interesting
-		if secondProcInfo.WorkingDir != "" {
-			info.WorkingDir = secondProcInfo.WorkingDir
-		}
-		if len(secondProcInfo.Environment) > 0 {
-			info.Environment = secondProcInfo.Environment
-		}
-		if len(secondProcInfo.ContainerID) > 0 {
-			info.ContainerID = secondProcInfo.ContainerID
-		}
-
-		// Get absolute path for ExePath if it's not already absolute
-		if info.ExePath != "" && !filepath.IsAbs(info.ExePath) {
-			if info.WorkingDir != "" {
-				info.ExePath = filepath.Join(info.WorkingDir, info.ExePath)
-			} else {
-				// Try to resolve through PATH
-				if path, err := exec.LookPath(info.ExePath); err == nil {
-					info.ExePath = path
-				}
-			}
-		}
-
-		if info.ExePath != "" {
-			info.Comm = filepath.Base(info.ExePath)
-		}
-
-		// If hash binaries is enabled and we have an executable path, calculate hash
-		if globalEngine != nil && globalEngine.config.HashBinaries &&
-			info.ExePath != "" {
-			// Only calculate hash for EXEC events (not EXIT)
-			if event.EventType == types.EVENT_PROCESS_EXEC {
-				if hash, err := CalculateMD5(info.ExePath); err == nil {
-					info.BinaryHash = hash
-					globalLogger.Debug("process", "Calculated MD5 hash for %s: %s\n",
-						info.ExePath, info.BinaryHash)
-				} else {
-					globalLogger.Debug("process", "Failed to calculate MD5 hash for %s: %v\n",
-						info.ExePath, err)
-				}
-			}
-		}
-
-		// Calculate ProcessUID
-		h := fnv.New32a()
-		h.Write([]byte(fmt.Sprintf("%s-%d", info.StartTime.Format(time.RFC3339Nano), info.PID)))
-		if info.ExePath != "" {
-			h.Write([]byte(info.ExePath))
-		}
-		info.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-	}
-
-	return info
 }
 
 // Add this where your other BPF-related functions are
@@ -734,50 +947,27 @@ func initializeProcessCache() {
 		}
 		processCount++
 
+		// Special case for PID 2
+		if pid == 2 {
+			info := &types.ProcessInfo{
+				PID:       2,
+				EventType: "exec",
+			}
+			CompleteProcessInfo(info) // This will handle the special case
+			AddOrUpdateProcessCache(2, info)
+			cachedCount++
+			continue
+		}
+
+		// Regular process
 		info := CollectProcMetadata(uint32(pid))
-		if info != nil && info.ExePath != "" {
-			// Set Comm from ExePath basename, just like in EnrichProcessEvent
-			info.Comm = filepath.Base(info.ExePath)
+		if info != nil && (info.ExePath != "" || info.CmdLine != "") {
+			info.EventType = "exec"
 
-			// Calculate ProcessUID just like in EnrichProcessEvent
-			h := fnv.New32a()
-			if stat, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
-				// Use the /proc entry's creation time as the start time
-				info.StartTime = stat.ModTime()
-				h.Write([]byte(fmt.Sprintf("%s-%d", info.StartTime.Format(time.RFC3339Nano), pid)))
-				if info.ExePath != "" {
-					h.Write([]byte(info.ExePath))
-				}
-				info.ProcessUID = fmt.Sprintf("%x", h.Sum32())
-			}
-
-			// Calculate binary hash if enabled
-			if globalEngine != nil && globalEngine.config.HashBinaries {
-				if hash, err := CalculateMD5(info.ExePath); err == nil {
-					info.BinaryHash = hash
-					if globalLogger != nil {
-						globalLogger.Debug("process", "Calculated MD5 hash for %s: %s",
-							info.ExePath, info.BinaryHash)
-					}
-				} else {
-					if globalLogger != nil {
-						globalLogger.Debug("process", "Failed to calculate MD5 hash for %s: %v",
-							info.ExePath, err)
-					}
-				}
-			}
-
+			// Apply standard enrichment and finalization
+			CompleteProcessInfo(info)
 			AddOrUpdateProcessCache(uint32(pid), info)
 			cachedCount++
-			if globalLogger != nil {
-				if info.BinaryHash != "" {
-					globalLogger.Debug("process", "Cached PID %d: %s (%s) [%s]",
-						pid, info.Comm, info.ExePath, info.BinaryHash)
-				} else {
-					globalLogger.Debug("process", "Cached PID %d: %s (%s)",
-						pid, info.Comm, info.ExePath)
-				}
-			}
 		}
 	}
 

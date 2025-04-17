@@ -14,6 +14,7 @@ const (
 	EVENT_NET_BIND     = 5
 	EVENT_DNS          = 6
 	EVENT_TLS          = 7
+	EVENT_PROCESS_FORK = 8
 )
 
 // Flow direction constants matching BPF program
@@ -114,6 +115,7 @@ type ProcessInfo struct {
 	PID         uint32
 	PPID        uint32
 	Comm        string
+	ParentComm  string
 	ExePath     string
 	CmdLine     string
 	WorkingDir  string
@@ -127,6 +129,7 @@ type ProcessInfo struct {
 	ExitCode    uint32
 	BinaryHash  string
 	ProcessUID  string
+	EventType   string // "fork", "exec", or "exit" for identification and output formatting
 }
 
 // DNS event structures

@@ -23,6 +23,7 @@
 #define EVENT_NET_BIND     5   // Network bind
 #define EVENT_DNS          6   // DNS query or response
 #define EVENT_TLS          7   // TLS handshake events
+#define EVENT_PROCESS_FORK 8   // Process creation via fork/clone
 
 // DNS operation flags
 #define DNS_QUERY    1   // Outbound DNS query
