@@ -65,6 +65,7 @@ func initSchema(db *sql.DB) error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_uid TEXT NOT NULL,
 		process_uid TEXT NOT NULL,
+        event_type TEXT NOT NULL,
 		parent_uid TEXT,
 		timestamp DATETIME NOT NULL,
 		pid INTEGER NOT NULL,
@@ -224,25 +225,51 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Handle process exit event by updating existing entry
+	var eventType string
+
 	if event.EventType == types.EVENT_PROCESS_EXIT {
+		eventType = "exit"
+	} else if event.EventType == types.EVENT_PROCESS_FORK {
+		eventType = "fork"
+	} else {
+		eventType = "exec"
+	}
+
+	if eventType == "exit" {
 		_, err := f.db.Exec(`
-            UPDATE processes 
-            SET exit_code = ?,
-                exit_time = ?
-            WHERE pid = ? 
-                AND exit_time IS NULL
-                AND session_uid = ?`,
-			info.ExitCode,
-			BpfTimestampToTime(event.Timestamp),
-			info.PID,
-			f.sessionUID)
+            INSERT INTO processes (
+                session_uid, process_uid, parent_uid, event_type, timestamp, 
+                pid, ppid, comm, cmdline, exe_path, working_dir, username, 
+                parent_comm, container_id, uid, gid, binary_hash,
+                exit_code, exit_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			f.sessionUID, info.ProcessUID, parentInfo.ProcessUID, eventType, BpfTimestampToTime(event.Timestamp),
+			info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
+			info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash,
+			info.ExitCode, BpfTimestampToTime(event.Timestamp))
+
+		// EXIT is done
+		return err
+	}
+
+	// if eventType == "exec" || eventType == "fork"
+	_, err := f.db.Exec(`
+            INSERT INTO processes (
+                session_uid, process_uid, parent_uid, event_type, timestamp, 
+                pid, ppid, comm, cmdline, exe_path, working_dir, username, 
+                parent_comm, container_id, uid, gid, binary_hash,
+                exit_code, exit_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.sessionUID, info.ProcessUID, parentInfo.ProcessUID, eventType, BpfTimestampToTime(event.Timestamp),
+		info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
+		info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash, nil, nil)
+	if err != nil {
 		return err
 	}
 
 	// Convert environment to JSON if present
+	//  Might put env vars in a separate table eventually..
 	var envJSON []byte
-	var err error
 	if len(info.Environment) > 0 {
 		envJSON, err = json.Marshal(info.Environment)
 		if err != nil {
@@ -250,26 +277,9 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 		}
 	}
 
-	// Determine parent UID
-	parentUID := ""
-	if parentInfo != nil {
-		parentUID = parentInfo.ProcessUID
-	}
-
 	// Insert into database
-	_, err = f.db.Exec(`
-        INSERT INTO processes (
-            session_uid, process_uid, parent_uid, timestamp, pid, ppid,
-            comm, cmdline, exe_path, working_dir, username, parent_comm,
-            container_id, uid, gid, binary_hash, environment,
-            exit_code, exit_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, parentUID,
-		BpfTimestampToTime(event.Timestamp), info.PID, info.PPID,
-		info.Comm, info.CmdLine, info.ExePath, info.WorkingDir,
-		info.Username, parentInfo.Comm, info.ContainerID,
-		info.UID, info.GID, info.BinaryHash, string(envJSON),
-		nil, nil) // exit_code and exit_time will be updated later
+	_, err = f.db.Exec(`UPDATE processes set environment = ? where session_uid = ? and process_uid = ?`,
+		string(envJSON), f.sessionUID, info.ProcessUID)
 
 	return err
 }
