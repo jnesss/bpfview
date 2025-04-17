@@ -306,6 +306,8 @@ func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 
 	if event.EventType == types.EVENT_PROCESS_EXEC {
 		jsonEvent.Message = fmt.Sprintf("process_exec: %s (PID: %d)", info.Comm, info.PID)
+	} else if event.EventType == types.EVENT_PROCESS_FORK {
+		jsonEvent.Message = fmt.Sprintf("process_fork: %s (PID: %d)", info.Comm, info.PID)
 	} else {
 		jsonEvent.Message = fmt.Sprintf("process_exit: %s (PID: %d)", info.Comm, info.PID)
 	}

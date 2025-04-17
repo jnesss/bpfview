@@ -27,6 +27,8 @@ func eventTypeString(eventType uint32) string {
 		return "process_exec"
 	case types.EVENT_PROCESS_EXIT:
 		return "process_exit"
+	case types.EVENT_PROCESS_FORK:
+		return "process_fork"
 	case types.EVENT_NET_CONNECT:
 		return "net_connect"
 	case types.EVENT_NET_ACCEPT:
