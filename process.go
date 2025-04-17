@@ -330,6 +330,7 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 
 	globalLogger.Info("process", "%s", msg.String())
 
+	// BUG:  This is NOT handling FORK-EXEC well.  Need to optimize this!!
 	// Log to file with proper structured format if logger is available
 	if globalLogger != nil {
 		if !parentExists {
