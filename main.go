@@ -70,6 +70,7 @@ func main() {
 		addIP          bool
 		sigmaRulesDir  string
 		sigmaQueueSize int
+		dbPath         string
 	}
 
 	rootCmd := &cobra.Command{
@@ -212,14 +213,22 @@ func main() {
 					formatter = outputformats.NewGELFFormatter(outputFile, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				}
 
+			case "sqlite":
+				sqliteFormatter, err := outputformats.NewSQLiteFormatter(config.dbPath, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
+				if err != nil {
+					return fmt.Errorf("failed to create sqlite formatter: %v", err)
+				}
+				formatter = sqliteFormatter
+
 			case "text", "":
 				textFormatter, err := outputformats.NewTextFormatter(logDir, hostname, hostIP, globalSessionUid, config.sigmaRulesDir != "")
 				if err != nil {
 					return fmt.Errorf("failed to create text formatter: %v", err)
 				}
 				formatter = textFormatter
+
 			default:
-				return fmt.Errorf("unknown format: %s (supported formats: text, json, json-ecs, gelf)", config.format)
+				return fmt.Errorf("unknown format: %s (supported formats: text, json, json-ecs, gelf, sqlite)", config.format)
 
 			}
 
@@ -376,9 +385,10 @@ func main() {
 	// Output options
 	rootCmd.PersistentFlags().StringVar(&config.logLevel, "log-level", "info", "Log level (error, warning, info, debug, trace)")
 	rootCmd.PersistentFlags().BoolVar(&config.showTimestamp, "log-timestamp", false, "Show timestamps in console logs")
-	rootCmd.PersistentFlags().StringVar(&config.format, "format", "text", "Output log format: text, json, json-ecs, gelf")
+	rootCmd.PersistentFlags().StringVar(&config.format, "format", "text", "Output log format: text, json, json-ecs, gelf, sqlite")
 	rootCmd.PersistentFlags().BoolVar(&config.addHostname, "add-hostname", false, "Include hostname with every log entry")
 	rootCmd.PersistentFlags().BoolVar(&config.addIP, "add-ip", false, "Include host IP address with every log entry")
+	rootCmd.PersistentFlags().StringVar(&config.dbPath, "dbfile", "./logs/bpfview.db", "SQLite database path (when using sqlite format)")
 
 	rootCmd.SetUsageTemplate(`Usage:
   {{.CommandPath}} [flags]
@@ -417,11 +427,12 @@ Optional Features:
 
 Output Options:
   --format string       Select output format (default "text"):
-                         text      - Separate log files in pipe-delimited format:
+                         text      - Separate log files in pipe-delimited format in logs:
                                    process.log, network.log, dns.log, tls.log
-                         json      - Single JSON events file (events.json)
-                         json-ecs  - Elastic Common Schema format (events.ecs.json)
-                         gelf      - Graylog Extended Log Format (events.gelf.json)
+                         json      - Single JSON events file (logs/events.json)
+                         json-ecs  - Elastic Common Schema format (logs/events.ecs.json)
+                         gelf      - Graylog Extended Log Format (logs/events.gelf.json)
+                         sqlite    - Structured database file (logs/bpfview.db)
   
   --log-level string   Control console output verbosity (default "info"):
                          error   - Only errors
@@ -437,6 +448,8 @@ Output Options:
   
   --add-ip            Add host IP address to all log entries
                        Recommended when collecting from multiple hosts
+  
+  --dbfile string.    Name of database file to use when using sqlite format                      
 
 Examples:
   # Monitor all container activity
