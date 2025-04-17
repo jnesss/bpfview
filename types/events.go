@@ -14,6 +14,7 @@ const (
 	EVENT_NET_BIND     = 5
 	EVENT_DNS          = 6
 	EVENT_TLS          = 7
+	EVENT_PROCESS_FORK = 8
 )
 
 // Flow direction constants matching BPF program
