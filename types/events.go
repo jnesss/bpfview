@@ -115,6 +115,7 @@ type ProcessInfo struct {
 	PID         uint32
 	PPID        uint32
 	Comm        string
+	ParentComm  string
 	ExePath     string
 	CmdLine     string
 	WorkingDir  string
@@ -128,7 +129,7 @@ type ProcessInfo struct {
 	ExitCode    uint32
 	BinaryHash  string
 	ProcessUID  string
-	IsForkOnly  bool
+	EventType   string // "fork", "exec", or "exit" for identification and output formatting
 }
 
 // DNS event structures
