@@ -128,6 +128,7 @@ type ProcessInfo struct {
 	ExitCode    uint32
 	BinaryHash  string
 	ProcessUID  string
+	IsForkOnly  bool
 }
 
 // DNS event structures
