@@ -165,11 +165,15 @@ func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.Proc
 
 	// Set process action based on event type
 	if event.EventType == types.EVENT_PROCESS_EXEC {
-		ecsEvent.Action = "process_started"
+		ecsEvent.Action = "process_exec"
 		ecsEvent.Outcome = "success"
 		ecsEvent.Message = fmt.Sprintf("process_exec: %s (PID: %d)", info.Comm, info.PID)
+	} else if event.EventType == types.EVENT_PROCESS_FORK {
+		ecsEvent.Action = "process_fork"
+		ecsEvent.Outcome = "success"
+		ecsEvent.Message = fmt.Sprintf("process_fork: %s (PID: %d)", info.Comm, info.PID)
 	} else {
-		ecsEvent.Action = "process_stopped"
+		ecsEvent.Action = "process_exit"
 		ecsEvent.Outcome = fmt.Sprintf("exit_code_%d", info.ExitCode)
 		ecsEvent.Message = fmt.Sprintf("process_exit: %s (PID: %d)", info.Comm, info.PID)
 	}
