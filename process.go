@@ -107,13 +107,26 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 		return
 	}
 
-	// Try to update exit time in the cache
-	exitTime := BpfTimestampToTime(event.Timestamp)
-	if !UpdateProcessExitTime(event.Pid, exitTime) {
-		// Either the process doesn't exist in cache or already has exit time
-		// Sometimes we get multiple EXIT messages from BPF so this is normal, not an error
+	// Get the process from cache
+	info, exists := GetProcessFromCache(event.Pid)
+	if !exists {
+		// Process not in cache, nothing to update
+		//  (we could try to update based on comm + PID but we wouldn't have UID..)
 		return
 	}
+
+	// Only update if we haven't recorded an exit time yet
+	if !info.ExitTime.IsZero() {
+		// Already has exit time, skip
+		return
+	}
+
+	info.ExitTime = BpfTimestampToTime(event.Timestamp)
+	info.ExitCode = event.ExitCode
+	info.EventType = "exit" // Update the event type
+
+	// Update the process in cache
+	AddOrUpdateProcessCache(event.Pid, info)
 
 	// Debug log for event details
 	globalLogger.Trace("process", "Processing EXIT event for PID %d\n", event.Pid)
@@ -121,29 +134,6 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 		string(bytes.TrimRight(event.Comm[:], "\x00")),
 		event.Uid,
 		event.Gid)
-
-	info := &types.ProcessInfo{
-		PID:       event.Pid,
-		Comm:      comm,
-		UID:       event.Uid,
-		GID:       event.Gid,
-		ExitCode:  event.ExitCode,
-		ExitTime:  exitTime,
-		EventType: "exit",
-	}
-
-	if cachedInfo, exists := GetProcessFromCache(event.Pid); exists {
-		// Copy start time for duration calculation and UID
-		info.StartTime = cachedInfo.StartTime
-
-		// Copy other fields for matching purposes (not logging these but still need to match)
-		info.ExePath = cachedInfo.ExePath
-		info.CmdLine = cachedInfo.CmdLine
-		info.WorkingDir = cachedInfo.WorkingDir
-		info.Username = cachedInfo.Username
-		info.ContainerID = cachedInfo.ContainerID
-		info.PPID = cachedInfo.PPID
-	}
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
@@ -167,10 +157,13 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	globalLogger.Info("process", "%s", msg.String())
 
 	var parentinfo *types.ProcessInfo
-	if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
+	if pinfo, exists := GetProcessFromCache(info.PPID); exists {
 		parentinfo = pinfo
 	} else {
-		parentinfo = &types.ProcessInfo{}
+		parentinfo = &types.ProcessInfo{
+			PID:  info.PPID,
+			Comm: string(bytes.TrimRight(event.ParentComm[:], "\x00")),
+		}
 	}
 
 	// Log to file with proper structured format if logger is available
