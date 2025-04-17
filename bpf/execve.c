@@ -173,6 +173,22 @@ int trace_sched_process_fork(struct trace_event_raw_sched_process_fork *ctx) {
 // Handle process exit
 SEC("tracepoint/sched/sched_process_exit") 
 int trace_sched_process_exit(struct trace_event_raw_sched_process_template *ctx) {
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    if (!task) {
+        return 0;
+    }
+    
+    // Get both TGID and PID
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tgid = pid_tgid >> 32;
+    __u32 pid = pid_tgid & 0xFFFFFFFF;
+    
+    // Only generate event if this is the main thread (pid == tgid)
+    // and the thread group is empty (indicating whole process is exiting)
+    if (pid != tgid) {
+        return 0;
+    }
+    
     // Reserve space in the ringbuffer
     struct process_event *evt;
     evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
@@ -182,7 +198,6 @@ int trace_sched_process_exit(struct trace_event_raw_sched_process_template *ctx)
     
     // Fill in basic info
     evt->event_type = EVENT_PROCESS_EXIT;
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
     evt->pid = pid;
     evt->timestamp = bpf_ktime_get_ns();
     bpf_get_current_comm(&evt->comm, sizeof(evt->comm));
@@ -198,7 +213,6 @@ int trace_sched_process_exit(struct trace_event_raw_sched_process_template *ctx)
     evt->flags = 0;
     
     // Get exit code from task
-    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     if (task) {
         evt->exit_code = BPF_CORE_READ(task, exit_code) >> 8;
     }
