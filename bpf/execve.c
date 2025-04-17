@@ -1,4 +1,4 @@
-// bpf/execve.c - Version 6: Simplified but effective argument capture
+// bpf/execve.c - Version 7: Add fork visibility
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
@@ -131,6 +131,41 @@ int trace_enter_execve(struct trace_event_raw_sys_enter *ctx) {
     
     // Store in map
     bpf_map_update_elem(&cmdlines, &pid, &cmd, BPF_ANY);
+    
+    return 0;
+}
+
+// Handle process forking
+SEC("tracepoint/sched/sched_process_fork")
+int trace_sched_process_fork(struct trace_event_raw_sched_process_fork *ctx) {
+    // Reserve space in the ringbuffer
+    struct process_event *evt;
+    evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
+    if (!evt) {
+        return 0;
+    }
+    
+    // Fill in basic info
+    evt->event_type = EVENT_PROCESS_FORK; // New event type
+    evt->pid = ctx->child_pid;
+    evt->ppid = ctx->parent_pid;
+    evt->timestamp = bpf_ktime_get_ns();
+    
+    // Get child and parent comm from the context
+    bpf_probe_read_kernel_str(&evt->comm, sizeof(evt->comm), ctx->child_comm);
+    bpf_probe_read_kernel_str(&evt->parent_comm, sizeof(evt->parent_comm), ctx->parent_comm);
+    
+    // Get UIDs - this is the parent's UID/GID
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    evt->uid = uid_gid & 0xffffffff;
+    evt->gid = uid_gid >> 32;
+    
+    // Initialize other fields
+    evt->exit_code = 0;
+    evt->flags = 0;
+    
+    // Submit the event
+    bpf_ringbuf_submit(evt, 0);
     
     return 0;
 }
