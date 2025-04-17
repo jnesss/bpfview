@@ -96,6 +96,8 @@ func handleProcessEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 		handleProcessExecEvent(event, bpfObjs)
 	} else if event.EventType == types.EVENT_PROCESS_EXIT {
 		handleProcessExitEvent(event)
+	} else if event.EventType == types.EVENT_PROCESS_FORK {
+		handleProcessForkEvent(event)
 	}
 }
 
@@ -183,6 +185,186 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	processCacheLock.Lock()
 	delete(processCache, event.Pid)
 	processCacheLock.Unlock()
+}
+
+func handleProcessForkEvent(event *types.ProcessEvent) {
+	// Debug log for event details
+	globalLogger.Trace("process", "Processing FORK event for PID %d (Parent: %d)\n",
+		event.Pid, event.Ppid)
+	globalLogger.Trace("process", "BPF data - Comm: %s, Parent: %s, UID: %d, GID: %d\n",
+		string(bytes.TrimRight(event.Comm[:], "\x00")),
+		string(bytes.TrimRight(event.ParentComm[:], "\x00")),
+		event.Uid,
+		event.Gid)
+
+	// Wait to get parent process info if not immediately available
+	var parentInfo *types.ProcessInfo
+	var parentExists bool
+
+	// Try up to 10 times with 5ms delay (50ms total max)
+	for i := 0; i < 10; i++ {
+		parentInfo, parentExists = GetProcessFromCache(event.Ppid)
+		if parentExists {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Create process info for the forked process
+	info := &types.ProcessInfo{
+		PID:        event.Pid,
+		PPID:       event.Ppid,
+		Comm:       string(bytes.TrimRight(event.Comm[:], "\x00")),
+		UID:        event.Uid,
+		GID:        event.Gid,
+		StartTime:  BpfTimestampToTime(event.Timestamp),
+		IsForkOnly: true, // Mark as fork-only process
+	}
+
+	// Copy information from parent if available
+	if parentExists {
+		// Inherit parent's properties for forked process
+		info.ExePath = parentInfo.ExePath
+		info.CmdLine = parentInfo.CmdLine
+		info.WorkingDir = parentInfo.WorkingDir
+		info.Username = parentInfo.Username
+		info.ContainerID = parentInfo.ContainerID
+		info.BinaryHash = parentInfo.BinaryHash
+		info.Environment = parentInfo.Environment
+	} else {
+		// If parent still isn't available, do minimal enrichment
+		info.Username = GetUsernameFromUID(info.UID)
+
+		// Try to get at least the working directory
+		procDir := fmt.Sprintf("/proc/%d", event.Pid)
+		if cwd, err := os.Readlink(fmt.Sprintf("%s/cwd", procDir)); err == nil {
+			globalLogger.Trace("process", "PID %d - Got working dir from /proc: %s\n", event.Pid, cwd)
+			info.WorkingDir = cwd
+		}
+
+		// Try to get the executable path
+		if exePath, err := os.Readlink(fmt.Sprintf("%s/exe", procDir)); err == nil {
+			globalLogger.Trace("process", "PID %d - Got exe path from /proc: %s\n", event.Pid, exePath)
+			info.ExePath = exePath
+		}
+
+		// Try to get container ID
+		if cgroupData, err := os.ReadFile(fmt.Sprintf("%s/cgroup", procDir)); err == nil {
+			lines := strings.Split(string(cgroupData), "\n")
+			for _, line := range lines {
+				if strings.Contains(line, "docker") || strings.Contains(line, "containerd") {
+					parts := strings.Split(line, "/")
+					for i := len(parts) - 1; i >= 0; i-- {
+						part := parts[i]
+						if containerIDRegex.MatchString(part) {
+							globalLogger.Debug("process", "PID %d - Found container ID: %s\n", event.Pid, part)
+							info.ContainerID = part
+							break
+						}
+					}
+					if info.ContainerID != "" {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Calculate ProcessUID - exactly as in handleProcessExecEvent via EnrichProcessEvent
+	h := fnv.New32a()
+	h.Write([]byte(fmt.Sprintf("%s-%d", info.StartTime.Format(time.RFC3339Nano), info.PID)))
+	if info.ExePath != "" {
+		h.Write([]byte(info.ExePath))
+	}
+	info.ProcessUID = fmt.Sprintf("%x", h.Sum32())
+
+	// Add to process cache
+	AddOrUpdateProcessCache(event.Pid, info)
+
+	// Add to process tree if exists
+	if globalEngine != nil {
+		globalEngine.processTree.AddProcess(info)
+	}
+
+	// Filter check AFTER enrichment and cache updates, but BEFORE logging
+	if globalEngine != nil && !globalEngine.ShouldLog(info) {
+		return
+	}
+
+	// Log to console with enhanced information
+	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
+
+	// Build the message using strings.Builder - same pattern as handleProcessExecEvent
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "FORK: PID=%d comm=%s ProcessUID=%s\n", info.PID, info.Comm, info.ProcessUID)
+	fmt.Fprintf(&msg, "      Parent: [%d] %s\n", info.PPID, parentComm)
+	fmt.Fprintf(&msg, "      User: %s (%d/%d)\n", info.Username, info.UID, info.GID)
+
+	if info.ExePath != "" {
+		fmt.Fprintf(&msg, "      Path: %s", info.ExePath)
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	if info.WorkingDir != "" {
+		fmt.Fprintf(&msg, "\n      CWD: %s", info.WorkingDir)
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	if info.CmdLine != "" {
+		fmt.Fprintf(&msg, "\n      Command: %s", sanitizeCommandLine(info.CmdLine))
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	if info.ContainerID != "" && info.ContainerID != "-" {
+		fmt.Fprintf(&msg, "\n      Container: %s", info.ContainerID)
+		if parentExists {
+			fmt.Fprintf(&msg, " (inherited)")
+		}
+	}
+
+	globalLogger.Info("process", "%s", msg.String())
+
+	// Log to file with proper structured format if logger is available
+	if globalLogger != nil {
+		if !parentExists {
+			// Create an empty parent info object if parent wasn't found
+			parentInfo = &types.ProcessInfo{}
+		}
+		globalLogger.LogProcess(event, info, parentInfo)
+	}
+
+	// If Sigma detection is enabled, submit event - same as handleProcessExecEvent
+	if globalSigmaEngine != nil {
+		// Include core fields needed for Sigma rule matching
+		sigmaEvent := map[string]interface{}{
+			"Image":            info.ExePath,
+			"CmdLine":          info.CmdLine,
+			"ProcessName":      info.Comm,
+			"ParentProcessId":  info.PPID,
+			"User":             info.Username,
+			"CurrentDirectory": info.WorkingDir,
+			"IsForkOnly":       true, // Add this for Sigma rules
+		}
+
+		// Create detection event
+		detectionEvent := DetectionEvent{
+			EventType:       "process_creation",
+			Data:            sigmaEvent,
+			Timestamp:       BpfTimestampToTime(event.Timestamp),
+			ProcessUID:      info.ProcessUID,
+			PID:             info.PID,
+			DetectionSource: "process_creation",
+		}
+
+		// Submit non-blocking
+		globalSigmaEngine.SubmitEvent(detectionEvent)
+	}
 }
 
 func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
