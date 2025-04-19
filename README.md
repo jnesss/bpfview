@@ -465,6 +465,11 @@ BPFView supports the following response actions that can be specified in Sigma r
    - Blocks a process from creating new child processes
    - Stops malware from spawning additional processes
    - Implemented using eBPF LSM hooks for task creation
+   
+4. **Dump Process Memory** (`dump_memory`)
+   - Preserves process memory at the time of Sigma matching
+   - Reads from /proc/pid/mem, does not PtraceAttach or send signal to process
+   - Saves process metadata to file alongside dump
 
 ### Example Sigma Rules with Response Actions
 
