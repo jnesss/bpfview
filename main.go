@@ -57,6 +57,7 @@ var (
 	globalEngine      *FilterEngine
 	globalSigmaEngine *SigmaEngine
 	globalSessionUid  string
+	responseManager   *ResponseManager
 )
 
 var BootTime time.Time
@@ -279,6 +280,8 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("failed to setup BPF: %v", err)
 			}
+
+			responseManager = NewResponseManager(&objs.response)
 
 			// Ensure programs are closed on exit
 			defer objs.netmon.Close()
@@ -647,6 +650,35 @@ func handleEvent(data []byte, rc readerContext) error {
 			return fmt.Errorf("error parsing TLS event: %w", err)
 		}
 		handleTLSEvent(&event)
+
+	case types.EVENT_RESPONSE:
+		var event struct {
+			EventType        uint32
+			Pid              uint32
+			Ppid             uint32
+			Comm             [16]byte
+			ActionTaken      uint32
+			BlockedSyscall   uint32
+			RestrictionFlags uint32
+		}
+		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			return fmt.Errorf("error parsing response event: %w", err)
+		}
+
+		// Log the action taken
+		action := "unknown"
+		switch event.ActionTaken {
+		case types.RESPONSE_ACTION_EXEC_BLOCKED:
+			action = "blocked process execution"
+		case types.RESPONSE_ACTION_NETWORK_BLOCKED:
+			action = "blocked network access"
+		case types.RESPONSE_ACTION_TASK_BLOCKED:
+			action = "blocked task creation"
+
+		}
+
+		globalLogger.Info("response", "Action %s for PID %d (flags: 0x%x)",
+			action, event.Pid, event.RestrictionFlags)
 
 	default:
 		return fmt.Errorf("unknown event type: %d", header.EventType)
