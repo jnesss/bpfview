@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/bradleyjkemp/sigma-go"
@@ -181,6 +182,57 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 			// Add network correlation if available
 			if networkUID, ok := evt.Data["network_uid"].(string); ok {
 				match.NetworkUID = networkUID
+			}
+
+			// Handle any response actions defined in the rule
+			if actions, ok := evaluator.Rule.AdditionalFields["actions"].([]interface{}); ok {
+				var flags uint32
+				var needsTermination bool
+				match.ResponseActions = []string{}
+
+				// Calculate all requested actions
+				for _, action := range actions {
+					if actionMap, ok := action.(map[string]interface{}); ok {
+						if actionType, ok := actionMap["type"].(string); ok {
+							// Record the action
+							match.ResponseActions = append(match.ResponseActions, actionType)
+
+							// Set appropriate flags for BPF-handled restrictions
+							switch actionType {
+							case types.ACTION_BLOCK_NETWORK:
+								flags |= types.BLOCK_NETWORK
+							case types.ACTION_PREVENT_CHILDREN:
+								flags |= types.PREVENT_CHILDREN
+							case types.ACTION_TERMINATE:
+								needsTermination = true
+							}
+						}
+					}
+				}
+
+				// Apply BPF restrictions if any
+				if flags != 0 {
+					if err := responseManager.ApplyRestrictions(evt.PID, flags); err != nil {
+						globalLogger.Error("sigma", "Failed to apply restrictions to PID %d: %v", evt.PID, err)
+					}
+				}
+
+				// Handle termination directly in userspace
+				if needsTermination {
+					proc, err := os.FindProcess(int(evt.PID))
+					if err != nil {
+						globalLogger.Error("sigma", "Failed to find process PID %d: %v", evt.PID, err)
+					} else {
+						err = proc.Signal(syscall.SIGKILL)
+						if err != nil {
+							globalLogger.Error("sigma", "Failed to terminate PID %d: %v", evt.PID, err)
+						} else {
+							// Use the rule name from your structure
+							// This might be evaluator.Rule.Title or evaluator.RuleName - check your exact structure
+							globalLogger.Info("sigma", "Successfully terminated PID %d due to rule match", evt.PID)
+						}
+					}
+				}
 			}
 
 			// Write match directly to logger
@@ -413,16 +465,22 @@ func isNetworkRule(rule sigma.Rule) bool {
 		return false
 	}
 
-	// Check explicitly for network_connection category first
+	// First, check explicitly for the category - this should be the primary criterion
 	if rule.Logsource.Category == "network_connection" {
 		return true
 	}
 
-	// More specific checks for network context
-	if rule.Logsource.Product == "linux" && (strings.Contains(strings.ToLower(rule.Description), "network") ||
+	// If the rule explicitly defines a different category, respect that
+	if rule.Logsource.Category == "process_creation" ||
+		rule.Logsource.Category == "process_access" ||
+		rule.Logsource.Category == "file_event" {
+		return false
+	}
+
+	// Only use description-based heuristics for rules without a clear category
+	if rule.Logsource.Category == "" && (strings.Contains(strings.ToLower(rule.Description), "network") ||
 		strings.Contains(strings.ToLower(rule.Description), "connection") ||
 		strings.Contains(strings.ToLower(rule.Description), "dns") ||
-		// Look for network indicators in detection fields
 		hasAnyField(rule.Detection, []string{"DestinationHostname", "DestinationPort", "DestinationIp"})) {
 		return true
 	}
