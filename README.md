@@ -444,6 +444,94 @@ BPFView gives you a comprehensive view of the entire process lifecycle:
 
 This granular process tracing provides unparalleled visibility for security monitoring, troubleshooting, and performance analysis.
 
+## Real-Time Response Actions
+
+BPFView can not only detect suspicious activity but also take immediate response actions when threats are identified. These actions are triggered by Sigma rules and provide automated security enforcement with minimal performance impact.
+
+### Available Response Actions
+
+BPFView supports the following response actions that can be specified in Sigma rules:
+
+1. **Process Termination** (`terminate`)
+   - Immediately kills a process when a rule matches
+   - Preserves process exit events in logs for forensic analysis
+
+2. **Network Access Blocking** (`block_network`)
+   - Prevents a process from establishing new network connections
+   - Implemented using eBPF LSM hooks for kernel-level enforcement
+   - Ideal for containing malware or preventing data exfiltration
+
+3. **Child Process Prevention** (`prevent_children`)
+   - Blocks a process from creating new child processes
+   - Stops malware from spawning additional processes
+   - Implemented using eBPF LSM hooks for task creation
+
+### Example Sigma Rules with Response Actions
+
+```yaml
+title: Python3 Process Termination Test
+id: 59fc8b3d-d91a-4a3c-8f87-c65fe76371be
+status: test
+description: Detects python3 execution and terminates the process
+author: Test Author
+date: 2025/04/18
+logsource:
+  product: linux
+  category: process_creation
+detection:
+  selection:
+    ProcessName|contains:
+      - python3
+    Image|endswith:
+      - /python3
+      - /python3.9
+  condition: selection
+actions:
+  - type: terminate
+level: info
+```
+
+```yaml
+title: Python3 Process Network Block Test
+id: 79043c45-6176-4556-8e23-98a7c3e22b72
+status: test
+description: Detects python3 execution and blocks network access
+author: Test Author
+date: 2025/04/18
+logsource:
+  product: linux
+  category: process_creation
+detection:
+  selection:
+    ProcessName|contains:
+      - python3
+    Image|endswith:
+      - /python3
+  condition: selection
+actions:
+  - type: block_network
+level: info
+```
+
+### Command Line Use
+
+To enable response actions, simply run BPFView with the Sigma rules directory:
+
+```bash
+# Enable Sigma detection with response actions
+sudo bpfview --sigma ./sigma
+```
+
+### Implementation Details
+
+BPFView's response actions are implemented using a hybrid approach:
+- Process termination is handled directly in userspace for maximum reliability
+- Network and process creation blocking are enforced at the kernel level using eBPF LSM hooks
+- All actions are logged with detailed context for auditing and forensic purposes
+
+Response actions provide a powerful way to automatically contain threats as soon as they're detected, significantly reducing the time between detection and response in your security operations.
+
+
 ## Command Line Interface
 
 BPFView offers comprehensive filtering capabilities that can be combined to precisely target what you want to monitor:
