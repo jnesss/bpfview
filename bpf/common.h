@@ -24,6 +24,7 @@
 #define EVENT_DNS          6   // DNS query or response
 #define EVENT_TLS          7   // TLS handshake events
 #define EVENT_PROCESS_FORK 8   // Process creation via fork/clone
+#define EVENT_RESPONSE     9   // Response action taken
 
 // DNS operation flags
 #define DNS_QUERY    1   // Outbound DNS query
@@ -162,6 +163,7 @@ struct process_restrictions {
 } __attribute__((packed));
 
 struct event {
+    __u32 event_type;    
     __u32 pid;
     __u32 ppid; 
     char comm[16];
