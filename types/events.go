@@ -15,12 +15,33 @@ const (
 	EVENT_DNS          = 6
 	EVENT_TLS          = 7
 	EVENT_PROCESS_FORK = 8
+	EVENT_RESPONSE     = 9
 )
 
 // Flow direction constants matching BPF program
 const (
 	FLOW_INGRESS = 1
 	FLOW_EGRESS  = 2
+)
+
+// bit flags for capabilities
+const (
+	BLOCK_NETWORK    = 0x1
+	PREVENT_CHILDREN = 0x2
+)
+
+// Response action types - these match the Sigma rule YAML syntax
+const (
+	ACTION_BLOCK_NETWORK    = "block_network"
+	ACTION_PREVENT_CHILDREN = "prevent_children"
+	ACTION_TERMINATE        = "terminate"
+)
+
+// Response action notification types (from response events)
+const (
+	RESPONSE_ACTION_EXEC_BLOCKED    = 1 // matches emit_event(pid, 1, flags)
+	RESPONSE_ACTION_NETWORK_BLOCKED = 2 // matches emit_event(pid, 2, flags)
+	RESPONSE_ACTION_TASK_BLOCKED    = 3 // matches emit_event(pid, 3, flags)
 )
 
 // CRITICAL: The following struct layouts must exactly match BPF programs.
@@ -209,4 +230,5 @@ type SigmaMatch struct {
 	RuleReferences  []string
 	RuleTags        []string
 	DetectionSource string // "dns_query" or "network_connection" or "process_creation"
+	ResponseActions []string
 }

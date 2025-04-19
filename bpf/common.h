@@ -24,6 +24,7 @@
 #define EVENT_DNS          6   // DNS query or response
 #define EVENT_TLS          7   // TLS handshake events
 #define EVENT_PROCESS_FORK 8   // Process creation via fork/clone
+#define EVENT_RESPONSE     9   // Response action taken
 
 // DNS operation flags
 #define DNS_QUERY    1   // Outbound DNS query
@@ -42,6 +43,9 @@
 #define TLS_CLIENT_HELLO    1
 #define TLS_SERVER_HELLO    2
 
+// Response action flags
+#define BLOCK_NETWORK       0x1
+#define PREVENT_CHILDREN    0x2
 
 // Socket info for tracking process info
 struct sock_info {
@@ -151,5 +155,21 @@ struct tls_event {
     __u16 data_len;
     unsigned char data[MAX_TLS_DATA];
 } __attribute__((packed));
+
+struct process_restrictions {
+    __u32 flags;
+    __u32 padding;
+    __u64 timestamp;
+} __attribute__((packed));
+
+struct event {
+    __u32 event_type;    
+    __u32 pid;
+    __u32 ppid; 
+    char comm[16];
+    __u32 action_taken;
+    __u32 blocked_syscall;
+    __u32 restriction_flags;
+};
 
 #endif /* __COMMON_H */

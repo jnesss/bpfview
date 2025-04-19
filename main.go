@@ -4,6 +4,7 @@ package main
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" dnsmon ./bpf/dnsmon.c
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" tlsmon ./bpf/tlsmon.c
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" execve ./bpf/execve.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" response ./bpf/response.c
 
 import (
 	"bytes"
@@ -38,10 +39,11 @@ import (
 )
 
 type bpfObjects struct {
-	netmon netmonObjects
-	dnsmon dnsmonObjects
-	execve execveObjects
-	tlsmon tlsmonObjects
+	netmon   netmonObjects
+	dnsmon   dnsmonObjects
+	execve   execveObjects
+	tlsmon   tlsmonObjects
+	response responseObjects
 }
 
 type readerContext struct {
@@ -55,6 +57,7 @@ var (
 	globalEngine      *FilterEngine
 	globalSigmaEngine *SigmaEngine
 	globalSessionUid  string
+	responseManager   *ResponseManager
 )
 
 var BootTime time.Time
@@ -278,20 +281,23 @@ func main() {
 				return fmt.Errorf("failed to setup BPF: %v", err)
 			}
 
+			responseManager = NewResponseManager(&objs.response)
+
 			// Ensure programs are closed on exit
 			defer objs.netmon.Close()
 			defer objs.dnsmon.Close()
 			defer objs.execve.Close()
 			defer objs.tlsmon.Close()
+			defer objs.response.Close()
 
 			// Attach all programs
 			log.Println("Attaching BPF programs...")
-			links := attachPrograms(objs.netmon, objs.dnsmon, objs.execve, objs.tlsmon)
+			links := attachPrograms(objs.netmon, objs.dnsmon, objs.execve, objs.tlsmon, objs.response)
 			defer closeLinks(links)
 
 			// Create readers for all ringbuffers
 			log.Println("Setting up ringbuffer readers...")
-			readers := setupRingbufReaders(objs.netmon, objs.dnsmon, objs.execve, objs.tlsmon)
+			readers := setupRingbufReaders(objs.netmon, objs.dnsmon, objs.execve, objs.tlsmon, objs.response)
 			defer closeReaders(readers)
 
 			// Set up signal handling
@@ -491,13 +497,14 @@ func setupBPF() (*bpfObjects, error) {
 	objs.dnsmon = loadDnsmonProgram()
 	objs.execve = loadExecveProgram()
 	objs.tlsmon = loadTlsmonProgram()
+	objs.response = loadResponseProgram()
 
 	return objs, nil
 }
 
 // Create readers for all ringbuffers
 func setupRingbufReaders(netmonObjs netmonObjects, dnsmonObjs dnsmonObjects,
-	execveObjs execveObjects, tlsmonObjs tlsmonObjects,
+	execveObjs execveObjects, tlsmonObjs tlsmonObjects, responseObjs responseObjects,
 ) []readerContext {
 	var readers []readerContext
 
@@ -543,6 +550,16 @@ func setupRingbufReaders(netmonObjs netmonObjects, dnsmonObjs dnsmonObjects,
 		reader:     tlsReader,
 		name:       "tls",
 		bpfObjects: tlsmonObjs,
+	})
+
+	responseReader, err := ringbuf.NewReader(responseObjs.Events)
+	if err != nil {
+		log.Fatal(err)
+	}
+	readers = append(readers, readerContext{
+		reader:     responseReader,
+		name:       "response",
+		bpfObjects: responseObjs,
 	})
 
 	return readers
@@ -634,6 +651,35 @@ func handleEvent(data []byte, rc readerContext) error {
 		}
 		handleTLSEvent(&event)
 
+	case types.EVENT_RESPONSE:
+		var event struct {
+			EventType        uint32
+			Pid              uint32
+			Ppid             uint32
+			Comm             [16]byte
+			ActionTaken      uint32
+			BlockedSyscall   uint32
+			RestrictionFlags uint32
+		}
+		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			return fmt.Errorf("error parsing response event: %w", err)
+		}
+
+		// Log the action taken
+		action := "unknown"
+		switch event.ActionTaken {
+		case types.RESPONSE_ACTION_EXEC_BLOCKED:
+			action = "blocked process execution"
+		case types.RESPONSE_ACTION_NETWORK_BLOCKED:
+			action = "blocked network access"
+		case types.RESPONSE_ACTION_TASK_BLOCKED:
+			action = "blocked task creation"
+
+		}
+
+		globalLogger.Info("response", "Action %s for PID %d (flags: 0x%x)",
+			action, event.Pid, event.RestrictionFlags)
+
 	default:
 		return fmt.Errorf("unknown event type: %d", header.EventType)
 	}
@@ -665,7 +711,7 @@ func findCgroupPath() string {
 }
 
 func attachPrograms(netmonObjs netmonObjects, dnsmonObjs dnsmonObjects,
-	execveObjs execveObjects, tlsmonObjs tlsmonObjects,
+	execveObjs execveObjects, tlsmonObjs tlsmonObjects, responseObjs responseObjects,
 ) []link.Link {
 	var links []link.Link
 
@@ -795,7 +841,33 @@ func attachPrograms(netmonObjs netmonObjects, dnsmonObjs dnsmonObjects,
 	}
 	links = append(links, forkLink)
 
-	log.Printf("Successfully attached %d BPF programs", len(links))
+	execLink, err := link.AttachLSM(link.LSMOptions{
+		Program: responseObjs.CheckExec,
+	})
+	if err != nil {
+		closeLinks(links)
+		log.Fatalf("attaching exec LSM: %v", err)
+	}
+	links = append(links, execLink)
+
+	taskAllocLink, err := link.AttachLSM(link.LSMOptions{
+		Program: responseObjs.CheckTaskAlloc,
+	})
+	if err != nil {
+		closeLinks(links)
+		log.Fatalf("attaching task_alloc LSM: %v", err)
+	}
+	links = append(links, taskAllocLink)
+
+	connectLink, err := link.AttachLSM(link.LSMOptions{
+		Program: responseObjs.CheckConnect,
+	})
+	if err != nil {
+		closeLinks(links)
+		log.Fatalf("attaching connect LSM: %v", err)
+	}
+	links = append(links, connectLink)
+
 	return links
 }
 
@@ -855,4 +927,12 @@ func getDefaultIP() string {
 		}
 	}
 	return ""
+}
+
+func loadResponseProgram() responseObjects {
+	objs := responseObjects{}
+	if err := loadResponseObjects(&objs, nil); err != nil {
+		log.Fatalf("loading response objects: %v", err)
+	}
+	return objs
 }
