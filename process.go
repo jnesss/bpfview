@@ -440,6 +440,9 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 			DetectionSource: "process_creation",
 		}
 
+		globalLogger.Trace("sigma", "Process creation event for PID %d: ProcessName=%s, Image=%s",
+			info.PID, sigmaEvent["ProcessName"], sigmaEvent["Image"])
+
 		// Submit non-blocking
 		globalSigmaEngine.SubmitEvent(detectionEvent)
 	}
@@ -518,6 +521,13 @@ func GetUsernameFromUID(uid uint32) string {
 
 // Merge information into baseInfo with awareness of execution phases
 func MergeProcessInfo(baseInfo *types.ProcessInfo, procInfo *types.ProcessInfo, phase string) {
+	// Trust /proc Comm after 2ms more than BPF Comm
+	if procInfo.Comm != "" && phase == "second" {
+		globalLogger.Trace("process", "PID %d: Updating Comm from second check: [%v] -> [%v]\n",
+			baseInfo.PID, baseInfo.Comm, procInfo.Comm)
+		baseInfo.Comm = procInfo.Comm
+	}
+
 	// Handle ExePath merging
 	if procInfo.ExePath != "" {
 		if baseInfo.ExePath == "" {
@@ -688,6 +698,11 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 	procDir := fmt.Sprintf("/proc/%d", pid)
 	if _, err := os.Stat(procDir); os.IsNotExist(err) {
 		return info
+	}
+
+	if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", procDir)); err == nil {
+		info.Comm = strings.TrimSpace(string(commBytes))
+		globalLogger.Trace("process", "PID %d: Read comm from /proc: [%v]\n", pid, info.Comm)
 	}
 
 	// Get only the basic fields needed from /proc
