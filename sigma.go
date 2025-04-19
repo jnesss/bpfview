@@ -43,6 +43,8 @@ type SigmaEngine struct {
 	running   atomic.Bool  // Track if processing worker is running
 }
 
+var memoryDumper *MemoryDumper
+
 func NewSigmaEngine(rulesDir string, queueSize int) (*SigmaEngine, error) {
 	if queueSize <= 0 {
 		queueSize = 10000 // Default size if not specified
@@ -61,6 +63,13 @@ Either:
 	if err != nil {
 		return nil, fmt.Errorf("failed to create file watcher: %v", err)
 	}
+
+	// Initialize memory dumper
+	dumper, err := NewMemoryDumper("./dumps")
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize memory dumper: %v", err)
+	}
+	memoryDumper = dumper
 
 	engine := &SigmaEngine{
 		rulesDir:     rulesDir,
@@ -187,7 +196,7 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 			// Handle any response actions defined in the rule
 			if actions, ok := evaluator.Rule.AdditionalFields["actions"].([]interface{}); ok {
 				var flags uint32
-				var needsTermination bool
+				var needsTermination, needsMemoryDump bool
 				match.ResponseActions = []string{}
 
 				// Calculate all requested actions
@@ -205,6 +214,8 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 								flags |= types.PREVENT_CHILDREN
 							case types.ACTION_TERMINATE:
 								needsTermination = true
+							case types.ACTION_DUMP_MEMORY:
+								needsMemoryDump = true
 							}
 						}
 					}
@@ -217,7 +228,18 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 					}
 				}
 
-				// Handle termination directly in userspace
+				// Handle memory dump if requested
+				if needsMemoryDump {
+					dumpPath, err := memoryDumper.DumpProcessMemory(evt.PID,
+						fmt.Sprintf("Sigma rule match: %s", evaluator.Rule.Title))
+					if err != nil {
+						globalLogger.Error("sigma", "Failed to dump memory for PID %d: %v", evt.PID, err)
+					} else {
+						globalLogger.Info("sigma", "Memory dump saved to: %s", dumpPath)
+					}
+				}
+
+				// Handle termination if requested
 				if needsTermination {
 					proc, err := os.FindProcess(int(evt.PID))
 					if err != nil {
@@ -227,9 +249,7 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 						if err != nil {
 							globalLogger.Error("sigma", "Failed to terminate PID %d: %v", evt.PID, err)
 						} else {
-							// Use the rule name from your structure
-							// This might be evaluator.Rule.Title or evaluator.RuleName - check your exact structure
-							globalLogger.Info("sigma", "Successfully terminated PID %d due to rule match", evt.PID)
+							globalLogger.Info("sigma", "Successfully terminated PID %d due to rule match: %s", evt.PID, evaluator.Rule.Title)
 						}
 					}
 				}

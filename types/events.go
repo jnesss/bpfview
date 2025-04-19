@@ -35,6 +35,7 @@ const (
 	ACTION_BLOCK_NETWORK    = "block_network"
 	ACTION_PREVENT_CHILDREN = "prevent_children"
 	ACTION_TERMINATE        = "terminate"
+	ACTION_DUMP_MEMORY      = "dump_memory"
 )
 
 // Response action notification types (from response events)
