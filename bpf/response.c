@@ -23,6 +23,7 @@ static void emit_event(pid_t pid, __u32 action, __u32 flags) {
     e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e) return;
     
+    e->event_type = EVENT_RESPONSE;
     e->pid = pid;
     e->ppid = 0;
     e->action_taken = action;
@@ -88,3 +89,4 @@ int check_connect(struct socket *sock, struct sockaddr *address, int addrlen) {
 }
 
 char LICENSE[] SEC("license") = "GPL";
+
