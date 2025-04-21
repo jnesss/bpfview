@@ -6,7 +6,7 @@
 #include <bpf/bpf_endian.h>
 
 #define TASK_COMM_LEN 16
-#define MAX_TLS_DATA 512
+#define MAX_TLS_DATA 512 
 #define MAX_ENTRIES 8192
 #define ALLOW_PKT 1
 #define ALLOW_SK 1
@@ -42,6 +42,24 @@
 // TLS handshake types
 #define TLS_CLIENT_HELLO    1
 #define TLS_SERVER_HELLO    2
+
+#ifndef ETH_P_IP
+#define ETH_P_IP    0x0800  // Internet Protocol packet
+#endif
+
+#ifndef ETH_P_IPV6
+#define ETH_P_IPV6  0x86DD  // IPv6 over bluebook
+#endif
+
+// IP protocol constants (already defined in your code, but adding for completeness)
+#ifndef IPPROTO_TCP
+#define IPPROTO_TCP  6  // Transmission Control Protocol
+#endif
+
+#ifndef IPPROTO_UDP
+#define IPPROTO_UDP  17 // User Datagram Protocol
+#endif
+
 
 // Response action flags
 #define BLOCK_NETWORK       0x1
@@ -140,15 +158,13 @@ struct tls_event {
     char parent_comm[TASK_COMM_LEN];
     __u32 version;
     __u32 handshake_length;
-    // IP address components
-    __u8 saddr_a;
-    __u8 saddr_b;
-    __u8 saddr_c;
-    __u8 saddr_d;
-    __u8 daddr_a;
-    __u8 daddr_b;
-    __u8 daddr_c;
-    __u8 daddr_d;
+    // IP version field
+    __u8 ip_version;        // 4 for IPv4, 6 for IPv6
+    __u8 protocol;          // Protocol (TCP, UDP, etc.)
+    __u8 padding[2];        // Ensure 4-byte alignment
+    // Full IPv6 address support
+    __u8 saddr[16];         // Source address (also holds IPv4 in first 4 bytes)
+    __u8 daddr[16];         // Destination address (also holds IPv4 in first 4 bytes)
     __u16 sport;
     __u16 dport;
     // Raw data

@@ -7,8 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jnesss/bpfview/outputformats" // for GenerateConnID utility function
+	"github.com/jnesss/bpfview/outputformats"
 	"github.com/jnesss/bpfview/types"
+)
+
+// QUIC constants
+const (
+	QUIC_VERSION_1     = 0x00000001 // QUIC v1
+	QUIC_VERSION_2     = 0x6b3343cf // QUIC v2 draft
+	QUIC_VERSION_DRAFT = 0xff000000 // IETF draft versions mask
+
+	// QUIC packet types
+	QUIC_INITIAL   = 0x0
+	QUIC_0RTT      = 0x1
+	QUIC_HANDSHAKE = 0x2
+	QUIC_RETRY     = 0x3
 )
 
 func formatTlsVersion(input uint16) string {
@@ -28,11 +41,32 @@ func formatTlsVersion(input uint16) string {
 	return tlsVersion
 }
 
-func handleTLSEvent(event *types.BPFTLSEvent) {
-	// Wait to start processing until we have processinfo
-	//  This is not my favorite design pattern
-	//  But we are reliant on the processinfo for the processUID correlation, amongst other things
+func formatQuicVersion(input uint32) string {
+	switch input {
+	case QUIC_VERSION_1:
+		return "QUIC v1"
+	case QUIC_VERSION_2:
+		return "QUIC v2 (draft)"
+	default:
+		if (input & QUIC_VERSION_DRAFT) == QUIC_VERSION_DRAFT {
+			// Draft version (0xff000000 - 0xffffffff)
+			return fmt.Sprintf("QUIC draft-0x%02x", input&0x00ffffff)
+		}
+		return fmt.Sprintf("QUIC 0x%08x", input)
+	}
+}
 
+func getQuicPacketType(firstByte byte) uint8 {
+	if (firstByte & 0x80) == 0 {
+		// Short header
+		return 0xff // Not a long packet
+	}
+	// Long header, extract packet type
+	return (firstByte & 0x30) >> 4
+}
+
+func handleTLSEvent(event *types.BPFTLSEvent) {
+	// Wait for process info
 	var processInfo *types.ProcessInfo
 	var exists bool
 
@@ -58,9 +92,17 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
-	// Create IP addresses
-	srcIP := net.IPv4(event.SAddrA, event.SAddrB, event.SAddrC, event.SAddrD)
-	dstIP := net.IPv4(event.DAddrA, event.DAddrB, event.DAddrC, event.DAddrD)
+	// Create IP address based on IP version
+	var srcIP, dstIP net.IP
+	if event.IPVersion == 4 {
+		// For IPv4, use only the first 4 bytes
+		srcIP = net.IP(event.SAddr[:4])
+		dstIP = net.IP(event.DAddr[:4])
+	} else {
+		// For IPv6, use all 16 bytes
+		srcIP = net.IP(event.SAddr[:])
+		dstIP = net.IP(event.DAddr[:])
+	}
 
 	// Generate connection ID
 	uid := outputformats.GenerateBidirectionalConnID(event.Pid, event.Ppid, srcIP, dstIP, event.SPort, event.DPort)
@@ -76,36 +118,37 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 		DestIP:          dstIP,
 		SourcePort:      event.SPort,
 		DestPort:        event.DPort,
+		Protocol:        event.Protocol,
+		IPVersion:       event.IPVersion,
 		HandshakeLength: event.HandshakeLength,
+		// Initialize as not QUIC, will set later if needed
+		IsQUIC: false,
 	}
+
+	// Check if this is TCP or UDP
+	if event.Protocol == 17 { // IPPROTO_UDP - QUIC
+		userEvent.IsQUIC = true
+		userEvent.QUICVersion = event.Version
+	}
+
+	globalLogger.Info("tls", "DataLen: %d, Protocol: %d", event.DataLen, event.Protocol)
 
 	// Parse TLS data if available
 	if event.DataLen > 0 {
 		actualDataLen := min(int(event.DataLen), len(event.Data))
+		globalLogger.Info("tls", "Actual data length for parsing: %d", actualDataLen)
 
-		// Extract SNI
-		userEvent.SNI = extractSNI(event.Data[:actualDataLen])
+		// Debug: print first 32 bytes of data
+		globalLogger.Info("tls", "First 32 bytes of data: % x", event.Data[:min(32, actualDataLen)])
 
-		// Extract TLS version
-		if actualDataLen >= 6 {
-			userEvent.TLSVersion = uint16(event.Data[1])<<8 | uint16(event.Data[2])
-			userEvent.HandshakeType = event.Data[5]
+		// Handle based on protocol
+		if !userEvent.IsQUIC {
+			// Standard TLS over TCP
+			parseTCPTLS(event.Data[:actualDataLen], &userEvent)
+		} else {
+			// QUIC processing
+			parseQUICTLS(event.Data[:actualDataLen], &userEvent)
 		}
-
-		// Extract additional TLS information
-		userEvent.SupportedVersions = extractSupportedVersions(event.Data[:actualDataLen])
-		userEvent.CipherSuites = extractCipherSuites(event.Data[:actualDataLen], 10)
-		userEvent.SupportedGroups = extractSupportedGroups(event.Data[:actualDataLen])
-		userEvent.KeyShareGroups = extractKeyShareGroups(event.Data[:actualDataLen])
-
-		// Add ALPN extraction for JA4 fingerprinting
-		userEvent.ALPNValues = extractALPN(event.Data[:actualDataLen])
-
-		if userEvent.HandshakeType == 0x01 {
-			userEvent.JA4 = CalculateJA4(&userEvent)
-			userEvent.JA4Hash = CalculateJA4Hash(userEvent.JA4)
-		}
-
 	}
 
 	// Filter check before any logging
@@ -121,13 +164,25 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 		userEvent.SourceIP, userEvent.SourcePort,
 		userEvent.DestIP, userEvent.DestPort)
 
-	if userEvent.TLSVersion != 0 {
-		fmt.Fprintf(&msg, "\n      Version: %v", formatTlsVersion(userEvent.TLSVersion))
+	// Add protocol information
+	proto := "TCP"
+	if userEvent.IsQUIC {
+		proto = "QUIC"
+		fmt.Fprintf(&msg, " (%s, %s)", proto, formatQuicVersion(userEvent.QUICVersion))
+	} else {
+		fmt.Fprintf(&msg, " (%s)", proto)
+		if userEvent.TLSVersion != 0 {
+			fmt.Fprintf(&msg, "\n      Version: %v", formatTlsVersion(userEvent.TLSVersion))
+		}
 	}
+
 	if userEvent.SNI != "" {
 		fmt.Fprintf(&msg, "\n      SNI: %s", userEvent.SNI)
 	}
-	fmt.Fprintf(&msg, "\n      ClientHello len: %d", userEvent.HandshakeLength)
+
+	if !userEvent.IsQUIC && userEvent.HandshakeLength > 0 {
+		fmt.Fprintf(&msg, "\n      ClientHello len: %d", userEvent.HandshakeLength)
+	}
 
 	// Print JA4 information for ClientHello
 	if userEvent.JA4 != "" {
@@ -173,6 +228,261 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 	if globalLogger != nil {
 		globalLogger.LogTLS(&userEvent, processInfo)
 	}
+}
+
+// parseTCPTLS handles standard TLS over TCP
+func parseTCPTLS(data []byte, userEvent *types.UserSpaceTLSEvent) {
+	// Proper TLS record parsing:
+	// Record header is 5 bytes: type(1), version(2), length(2)
+	// Handshake header is 4 bytes: type(1), length(3)
+	// ClientHello starts after that with: version(2), random(32), ...
+
+	// Get the handshake message version (bytes 9-10, after both headers)
+	if len(data) >= 10 { // Keep original length checks in place
+		userEvent.TLSVersion = uint16(data[9])<<8 | uint16(data[10])
+		userEvent.HandshakeType = data[5]
+		globalLogger.Info("tls", "TLS Version bytes: %02x %02x", data[9], data[10])
+	} else {
+		globalLogger.Info("tls", "Not enough data to parse version (need 10, got %d)", len(data))
+	}
+
+	// Now parse extensions
+	if len(data) >= 11 {
+		userEvent.SNI = extractSNI(data)
+		if userEvent.SNI != "" {
+			globalLogger.Info("tls", "Found SNI: %s", userEvent.SNI)
+		}
+		userEvent.SupportedVersions = extractSupportedVersions(data)
+		userEvent.CipherSuites = extractCipherSuites(data, 10)
+		userEvent.SupportedGroups = extractSupportedGroups(data)
+		userEvent.KeyShareGroups = extractKeyShareGroups(data)
+		userEvent.ALPNValues = extractALPN(data)
+	}
+
+	if userEvent.HandshakeType == 0x01 {
+		userEvent.JA4 = CalculateJA4(userEvent)
+		userEvent.JA4Hash = CalculateJA4Hash(userEvent.JA4)
+	}
+}
+
+// parseQUICTLS handles TLS over QUIC
+func parseQUICTLS(data []byte, userEvent *types.UserSpaceTLSEvent) {
+	if len(data) < 5 {
+		return // Not enough data
+	}
+
+	// Extract QUIC header info
+	firstByte := data[0]
+	packetType := getQuicPacketType(firstByte)
+
+	// We're primarily interested in Initial packets which contain ClientHello
+	if packetType != QUIC_INITIAL {
+		// For all other packet types, just log the type
+		globalLogger.Info("tls", "QUIC packet type: %d", packetType)
+		return
+	}
+
+	globalLogger.Info("tls", "QUIC Initial packet detected")
+
+	// Extract CRYPTO frame containing TLS data
+	// This is a simplified approach - real QUIC parsing is much more complex
+	cryptoData := findQUICCryptoFrame(data)
+	if cryptoData == nil {
+		globalLogger.Info("tls", "No CRYPTO frame found in QUIC Initial packet")
+		return
+	}
+
+	// Look for ClientHello in the CRYPTO frame (it starts with type 0x01)
+	if len(cryptoData) > 0 && cryptoData[0] == 0x01 {
+		// This appears to be a ClientHello
+		globalLogger.Info("tls", "Found potential ClientHello in QUIC packet")
+
+		// Extract SNI
+		userEvent.SNI = extractSNIFromQUICClientHello(cryptoData)
+		if userEvent.SNI != "" {
+			globalLogger.Info("tls", "Found SNI in QUIC: %s", userEvent.SNI)
+		}
+
+		// Create a simplified JA4 fingerprint for QUIC
+		if userEvent.SNI != "" {
+			// Format: q<packetType>_<sni>_<quicVersion>
+			userEvent.JA4 = fmt.Sprintf("q%d_%s_%08x",
+				packetType,
+				strings.ReplaceAll(userEvent.SNI, ".", "d"),
+				userEvent.QUICVersion)
+			userEvent.JA4Hash = CalculateJA4Hash(userEvent.JA4)
+		}
+	}
+}
+
+// findQUICCryptoFrame tries to locate a CRYPTO frame in a QUIC packet
+// CRYPTO frame type is 0x06
+func findQUICCryptoFrame(data []byte) []byte {
+	// This is a simplified approach - real QUIC parsing is more complex
+	// We're looking for frame type 0x06 (CRYPTO)
+
+	// Skip the QUIC header
+	// Long header format: 1 byte type + 4 bytes version + ?
+	// This is incomplete - full parsing would handle connection IDs, etc.
+	offset := 5 // Skip type byte and version
+
+	// Skip source connection ID
+	if offset >= len(data) {
+		return nil
+	}
+	srcConnIDLen := int(data[offset])
+	offset += 1 + srcConnIDLen
+
+	// Skip destination connection ID
+	if offset >= len(data) {
+		return nil
+	}
+	dstConnIDLen := int(data[offset])
+	offset += 1 + dstConnIDLen
+
+	// Skip token length (variable length integer)
+	// This is simplified - proper parsing would handle variable length integers
+	if offset >= len(data) {
+		return nil
+	}
+	tokenLen := int(data[offset])
+	offset += 1 + tokenLen
+
+	// Skip length field
+	// Again, simplified
+	if offset+2 > len(data) {
+		return nil
+	}
+	offset += 2
+
+	// Now look for CRYPTO frame
+	for offset < len(data) {
+		if offset+1 > len(data) {
+			break
+		}
+
+		frameType := data[offset]
+		offset++
+
+		if frameType == 0x06 { // CRYPTO frame
+			// Extract offset (variable length integer)
+			// Simplified - assume 1 byte
+			if offset >= len(data) {
+				return nil
+			}
+
+			// Skip offset field
+			offset++
+
+			// Extract length (variable length integer)
+			// Simplified - assume 1 byte
+			if offset >= len(data) {
+				return nil
+			}
+
+			cryptoLen := int(data[offset])
+			offset++
+
+			// Extract CRYPTO data
+			if offset+cryptoLen > len(data) {
+				return nil // Not enough data
+			}
+
+			return data[offset : offset+cryptoLen]
+		}
+
+		// Skip this frame (simplified)
+		offset += 4 // Just a guess to advance
+	}
+
+	return nil
+}
+
+// extractSNIFromQUICClientHello extracts SNI from a TLS ClientHello in QUIC
+func extractSNIFromQUICClientHello(data []byte) string {
+	// The ClientHello structure in QUIC is the same as in TLS
+	// But it doesn't have the TLS record layer header
+
+	if len(data) < 40 { // Minimum size for ClientHello
+		return ""
+	}
+
+	// Skip handshake type (1 byte) and length (3 bytes)
+	offset := 4
+
+	// Skip client version (2 bytes) and random (32 bytes)
+	offset += 34
+
+	if offset+1 > len(data) {
+		return ""
+	}
+
+	// Skip session ID
+	sessionIDLen := int(data[offset])
+	offset += 1 + sessionIDLen
+
+	if offset+2 > len(data) {
+		return ""
+	}
+
+	// Skip cipher suites
+	cipherSuitesLen := int(data[offset])<<8 | int(data[offset+1])
+	offset += 2 + cipherSuitesLen
+
+	if offset+1 > len(data) {
+		return ""
+	}
+
+	// Skip compression methods
+	compressionMethodsLen := int(data[offset])
+	offset += 1 + compressionMethodsLen
+
+	if offset+2 > len(data) {
+		return ""
+	}
+
+	// Process extensions
+	extensionsLen := int(data[offset])<<8 | int(data[offset+1])
+	offset += 2
+
+	extensionsEnd := offset + extensionsLen
+	if extensionsEnd > len(data) {
+		extensionsEnd = len(data)
+	}
+
+	for offset+4 <= extensionsEnd {
+		extType := int(data[offset])<<8 | int(data[offset+1])
+		extLen := int(data[offset+2])<<8 | int(data[offset+3])
+		offset += 4
+
+		if extType == 0 { // Server Name extension
+			if offset+2 > extensionsEnd {
+				break
+			}
+			offset += 2 // Skip server name list length
+
+			if offset+1 > extensionsEnd {
+				break
+			}
+			nameType := data[offset]
+			offset++
+
+			if nameType == 0 {
+				if offset+2 > extensionsEnd {
+					break
+				}
+				hostnameLen := int(data[offset])<<8 | int(data[offset+1])
+				offset += 2
+
+				if offset+hostnameLen <= extensionsEnd {
+					return string(data[offset : offset+hostnameLen])
+				}
+			}
+		}
+		offset += extLen
+	}
+
+	return ""
 }
 
 func formatSupportedGroup(group uint16) string {
@@ -559,3 +869,4 @@ func extractKeyShareGroups(data []byte) []uint16 {
 	}
 	return groups
 }
+

@@ -9,7 +9,7 @@ import (
 	"github.com/jnesss/bpfview/types"
 )
 
-// Extract ALPN values from ClientHello
+// Extract ALPN values from the alpn extension
 func extractALPN(data []byte) []string {
 	alpnValues := []string{}
 
@@ -17,9 +17,8 @@ func extractALPN(data []byte) []string {
 		return alpnValues
 	}
 
-	// Skip through headers to extensions
-	offset := 9  // Skip record header (5) and handshake header (4)
-	offset += 34 // Skip version (2) and random (32)
+	offset := 9  // Skip headers
+	offset += 34 // Skip version and random
 
 	if offset+1 > len(data) {
 		return alpnValues
@@ -65,39 +64,29 @@ func extractALPN(data []byte) []string {
 		offset += 4
 
 		if extType == 0x0010 && offset+2 <= extensionsEnd {
-			// ALPN extension found
-			protocolListLen := int(data[offset])<<8 | int(data[offset+1])
+			alpnListLen := int(data[offset])<<8 | int(data[offset+1])
 			offset += 2
 
-			protocolsEnd := offset + protocolListLen
-			if protocolsEnd > extensionsEnd {
-				protocolsEnd = extensionsEnd
+			alpnEnd := offset + alpnListLen
+			if alpnEnd > extensionsEnd {
+				alpnEnd = extensionsEnd
 			}
 
-			// Extract each protocol
-			for offset < protocolsEnd {
-				if offset+1 > extensionsEnd {
-					break
-				}
-
-				protocolLen := int(data[offset])
+			for offset+1 <= alpnEnd {
+				strLen := int(data[offset])
 				offset++
 
-				if offset+protocolLen <= extensionsEnd {
-					protocol := string(data[offset : offset+protocolLen])
-					alpnValues = append(alpnValues, protocol)
-					offset += protocolLen
+				if offset+strLen <= alpnEnd {
+					alpnValues = append(alpnValues, string(data[offset:offset+strLen]))
+					offset += strLen
 				} else {
 					break
 				}
 			}
-
 			return alpnValues
 		}
-
 		offset += extLen
 	}
-
 	return alpnValues
 }
 

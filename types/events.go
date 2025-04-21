@@ -111,14 +111,11 @@ type BPFTLSEvent struct {
 	ParentComm      [16]byte
 	Version         uint32
 	HandshakeLength uint32
-	SAddrA          uint8
-	SAddrB          uint8
-	SAddrC          uint8
-	SAddrD          uint8
-	DAddrA          uint8
-	DAddrB          uint8
-	DAddrC          uint8
-	DAddrD          uint8
+	IPVersion       uint8    // 4 or 6
+	Protocol        uint8    // TCP (6) or UDP (17)
+	Padding         [2]uint8 // Alignment padding
+	SAddr           [16]byte // IPv6 size array, also holds IPv4
+	DAddr           [16]byte // IPv6 size array, also holds IPv4
 	SPort           uint16
 	DPort           uint16
 	DataLen         uint16
@@ -198,11 +195,14 @@ type UserSpaceTLSEvent struct {
 	Timestamp         uint64
 	Comm              string
 	ParentComm        string
-	SourceIP          net.IP
-	DestIP            net.IP
+	SourceIP          net.IP // Will hold both v4 and v6
+	DestIP            net.IP // Will hold both v4 and v6
 	SourcePort        uint16
 	DestPort          uint16
+	Protocol          uint8 // TCP (6) or UDP (17)
+	IPVersion         uint8 // 4 or 6
 	TLSVersion        uint16
+	QUICVersion       uint32 // For QUIC connections
 	HandshakeType     uint8
 	HandshakeLength   uint32
 	SNI               string
@@ -213,6 +213,7 @@ type UserSpaceTLSEvent struct {
 	ALPNValues        []string
 	JA4               string
 	JA4Hash           string
+	IsQUIC            bool // Helper field to identify QUIC connections
 }
 
 type SigmaMatch struct {
@@ -233,3 +234,4 @@ type SigmaMatch struct {
 	DetectionSource string // "dns_query" or "network_connection" or "process_creation"
 	ResponseActions []string
 }
+
