@@ -4,6 +4,10 @@
 #include <bpf/bpf_endian.h>
 #include "common.h"
 
+#ifndef ETH_P_IP
+#define ETH_P_IP    0x0800  // Internet Protocol packet
+#endif
+
 // Ringbuffer for events
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -25,6 +29,17 @@ struct {
     __type(key, __u32);
     __type(value, struct tls_event);
 } heap SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct {
+        unsigned char data[MAX_TLS_DATA];
+        __u32 len;
+    });
+} staging SEC(".maps");
+
 
 // Track socket creation via cgroup hook
 SEC("cgroup/sock_create")
@@ -96,12 +111,15 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
         return;
 
     // Extract handshake message length from handshake header
-    // This is a 3-byte field at offset 6, 7, 8 in the handshake record
-    // payload_offset + 6, 7, 8
     unsigned char length_bytes[3];
     if (bpf_skb_load_bytes(skb, payload_offset + 6, length_bytes, 3) < 0)
         return;
         
+    __u32 tls_record_len = (tls_header[3] << 8) | tls_header[4];
+    __u32 handshake_len = (length_bytes[0] << 16) | (length_bytes[1] << 8) | length_bytes[2];
+
+    bpf_printk("TLS Record len: %u, Handshake len: %u\n", tls_record_len, handshake_len);
+    
     // TLS version check
     if (tls_header[1] != 0x03 || tls_header[2] < 0x01 || tls_header[2] > 0x04)
         return;
@@ -123,18 +141,22 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
     __builtin_memcpy(&event->parent_comm, info->parent_comm, sizeof(event->parent_comm));
     
     // Fill in IP and port information
-    event->saddr_a = (ip->saddr) & 0xFF;
-    event->saddr_b = (ip->saddr >> 8) & 0xFF;
-    event->saddr_c = (ip->saddr >> 16) & 0xFF;
-    event->saddr_d = (ip->saddr >> 24) & 0xFF;
+    event->saddr[0] = (ip->saddr) & 0xFF;
+    event->saddr[1] = (ip->saddr >> 8) & 0xFF;
+    event->saddr[2] = (ip->saddr >> 16) & 0xFF;
+    event->saddr[3] = (ip->saddr >> 24) & 0xFF;
     
-    event->daddr_a = (ip->daddr) & 0xFF;
-    event->daddr_b = (ip->daddr >> 8) & 0xFF;
-    event->daddr_c = (ip->daddr >> 16) & 0xFF;
-    event->daddr_d = (ip->daddr >> 24) & 0xFF;
+    event->daddr[0] = (ip->daddr) & 0xFF;
+    event->daddr[1] = (ip->daddr >> 8) & 0xFF;
+    event->daddr[2] = (ip->daddr >> 16) & 0xFF;
+    event->daddr[3] = (ip->daddr >> 24) & 0xFF;
     
     event->sport = bpf_ntohs(tcp->source);
     event->dport = bpf_ntohs(tcp->dest);
+    
+    // Set protocol
+    event->ip_version = 4;
+    event->protocol = IPPROTO_TCP;
     
     event->version = ((__u32)tls_header[1] << 8) | tls_header[2];
     
@@ -143,12 +165,99 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
     
     // Read payload into event data buffer
     event->data_len = 0;
-    if (payload_offset + MAX_TLS_DATA <= skb->len) {
-        if (bpf_skb_load_bytes(skb, payload_offset, event->data, MAX_TLS_DATA) == 0) {
-            event->data_len = MAX_TLS_DATA;
+    __u32 zero1 = 0;
+    struct {
+        unsigned char data[MAX_TLS_DATA];
+        __u32 len;
+    } *stage = bpf_map_lookup_elem(&staging, &zero1);
+    if (!stage)
+        return;
+
+    #define CHUNK_SIZE 64
+
+    // try to copy max 512 bytes in 64 byte chunks 
+    //  manually unrolled to satisfy verifier, ick i know
+    if (payload_offset < skb->len) {
+        // Chunk 1
+        if (bpf_skb_load_bytes(skb, payload_offset, stage->data, CHUNK_SIZE) == 0) {
+            #pragma unroll
+            for (int i = 0; i < CHUNK_SIZE; i++) {
+                event->data[i] = stage->data[i];
+            }
+            event->data_len = CHUNK_SIZE;
+        
+            // Chunk 2
+            if (payload_offset + CHUNK_SIZE < skb->len &&
+                bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE, stage->data, CHUNK_SIZE) == 0) {
+                #pragma unroll
+                for (int i = 0; i < CHUNK_SIZE; i++) {
+                    event->data[i + CHUNK_SIZE] = stage->data[i];
+                }
+                event->data_len = CHUNK_SIZE * 2;
+            
+                // Chunk 3
+                if (payload_offset + CHUNK_SIZE * 2 < skb->len &&
+                    bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 2, stage->data, CHUNK_SIZE) == 0) {
+                    #pragma unroll
+                    for (int i = 0; i < CHUNK_SIZE; i++) {
+                        event->data[i + CHUNK_SIZE * 2] = stage->data[i];
+                    }
+                    event->data_len = CHUNK_SIZE * 3;
+                
+                    // Chunk 4
+                    if (payload_offset + CHUNK_SIZE * 3 < skb->len &&
+                        bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 3, stage->data, CHUNK_SIZE) == 0) {
+                        #pragma unroll
+                        for (int i = 0; i < CHUNK_SIZE; i++) {
+                            event->data[i + CHUNK_SIZE * 3] = stage->data[i];
+                        }
+                        event->data_len = CHUNK_SIZE * 4;
+                    
+                        // Chunk 5
+                        if (payload_offset + CHUNK_SIZE * 4 < skb->len &&
+                            bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 4, stage->data, CHUNK_SIZE) == 0) {
+                            #pragma unroll
+                            for (int i = 0; i < CHUNK_SIZE; i++) {
+                                event->data[i + CHUNK_SIZE * 4] = stage->data[i];
+                            }
+                            event->data_len = CHUNK_SIZE * 5;
+                        
+                            // Chunk 6
+                            if (payload_offset + CHUNK_SIZE * 5 < skb->len &&
+                                bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 5, stage->data, CHUNK_SIZE) == 0) {
+                                #pragma unroll
+                                for (int i = 0; i < CHUNK_SIZE; i++) {
+                                    event->data[i + CHUNK_SIZE * 5] = stage->data[i];
+                                }
+                                event->data_len = CHUNK_SIZE * 6;
+                            
+                                // Chunk 7
+                                if (payload_offset + CHUNK_SIZE * 6 < skb->len &&
+                                    bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 6, stage->data, CHUNK_SIZE) == 0) {
+                                    #pragma unroll
+                                    for (int i = 0; i < CHUNK_SIZE; i++) {
+                                        event->data[i + CHUNK_SIZE * 6] = stage->data[i];
+                                    }
+                                    event->data_len = CHUNK_SIZE * 7;
+                                
+                                    // Chunk 8
+                                    if (payload_offset + CHUNK_SIZE * 7 < skb->len &&
+                                        bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 7, stage->data, CHUNK_SIZE) == 0) {
+                                        #pragma unroll
+                                        for (int i = 0; i < CHUNK_SIZE; i++) {
+                                            event->data[i + CHUNK_SIZE * 7] = stage->data[i];
+                                        }
+                                        event->data_len = CHUNK_SIZE * 8;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-
+            
     // Reserve and copy to final event buffer
     struct tls_event *evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
     if (!evt)
@@ -169,7 +278,11 @@ int cgroup_skb_ingress(struct __sk_buff *skb) {
         info = &default_info;
     }
     
-    process_tcp_tls(skb, info);
+    // Only handle IPv4 for now
+    if (skb->protocol == bpf_htons(ETH_P_IP)) {
+        process_tcp_tls(skb, info);
+    }
+    
     return 1;
 }
 
@@ -184,7 +297,11 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
         info = &default_info;
     }
     
-    process_tcp_tls(skb, info);
+    // Only handle IPv4 for now
+    if (skb->protocol == bpf_htons(ETH_P_IP)) {
+        process_tcp_tls(skb, info);
+    }
+    
     return 1;
 }
 
