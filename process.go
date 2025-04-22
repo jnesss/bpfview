@@ -18,11 +18,8 @@ import (
 	"github.com/jnesss/bpfview/types"
 )
 
-// Process cache to maintain state between EXEC and EXIT events
-var (
-	processCache     = make(map[uint32]*types.ProcessInfo)
-	processCacheLock sync.RWMutex
-)
+// Process cache to maintain state
+var processCache *ProcessCache
 
 // Username cache to avoid repeated lookups
 var (
@@ -175,9 +172,9 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	//  This delay preserves the cache for a process exec that might come out of order
 	time.Sleep(1 * time.Second)
 
-	processCacheLock.Lock()
-	delete(processCache, event.Pid)
-	processCacheLock.Unlock()
+	if processCache != nil {
+		processCache.Delete(event.Pid)
+	}
 }
 
 func handleProcessForkEvent(event *types.ProcessEvent) {
@@ -459,39 +456,17 @@ func loadExecveProgram() execveObjects {
 
 // AddOrUpdateProcessCache adds or updates a process in the cache
 func AddOrUpdateProcessCache(pid uint32, info *types.ProcessInfo) {
-	processCacheLock.Lock()
-	defer processCacheLock.Unlock()
-
-	processCache[pid] = info
+	if processCache != nil {
+		processCache.Set(pid, info)
+	}
 }
 
 // GetProcessFromCache retrieves process info from the cache
 func GetProcessFromCache(pid uint32) (*types.ProcessInfo, bool) {
-	processCacheLock.RLock()
-	defer processCacheLock.RUnlock()
-
-	info, exists := processCache[pid]
-	return info, exists
-}
-
-// UpdateProcessExitTime updates only the exit time for a process in the cache
-func UpdateProcessExitTime(pid uint32, exitTime time.Time) bool {
-	processCacheLock.Lock()
-	defer processCacheLock.Unlock()
-
-	info, exists := processCache[pid]
-	if !exists {
-		return false
+	if processCache == nil {
+		return nil, false
 	}
-
-	// Only update if we haven't recorded an exit time yet
-	if !info.ExitTime.IsZero() {
-		return false // Already has exit time
-	}
-
-	info.ExitTime = exitTime
-	processCache[pid] = info
-	return true
+	return processCache.Get(pid)
 }
 
 // GetUsernameFromUID returns the username for a given UID

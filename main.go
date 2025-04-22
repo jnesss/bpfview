@@ -86,16 +86,17 @@ var BootTime time.Time
 
 func main() {
 	var config struct {
-		logLevel       string
-		showTimestamp  bool
-		filterConfig   FilterConfig
-		HashBinaries   bool
-		format         string
-		addHostname    bool
-		addIP          bool
-		sigmaRulesDir  string
-		sigmaQueueSize int
-		dbPath         string
+		logLevel         string
+		showTimestamp    bool
+		filterConfig     FilterConfig
+		HashBinaries     bool
+		format           string
+		addHostname      bool
+		addIP            bool
+		sigmaRulesDir    string
+		sigmaQueueSize   int
+		dbPath           string
+		processCacheSize int64
 	}
 
 	rootCmd := &cobra.Command{
@@ -418,6 +419,10 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&config.addIP, "add-ip", false, "Include host IP address with every log entry")
 	rootCmd.PersistentFlags().StringVar(&config.dbPath, "dbfile", "./logs/bpfview.db", "SQLite database path (when using sqlite format)")
 
+	// Performance optimization options
+	rootCmd.Flags().Int64Var(&config.processCacheSize, "process-cache-size",
+		100000, "Maximum number of processes to cache")
+
 	rootCmd.SetUsageTemplate(`Usage:
   {{.CommandPath}} [flags]
 
@@ -477,7 +482,11 @@ Output Options:
   --add-ip            Add host IP address to all log entries
                        Recommended when collecting from multiple hosts
   
-  --dbfile string.    Name of database file to use when using sqlite format                      
+  --dbfile string.    Name of database file to use when using sqlite format     
+  
+Performance Optimization Options:
+  --process-cache-size int  Maximum number of processes to cache (default 100000)
+                  
 
 Examples:
   # Monitor all container activity
