@@ -339,6 +339,13 @@ func (f *ECSFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Proc
 			uint32ToNetIP(event.SrcIP),
 			uint32ToNetIP(event.DstIP),
 			event.SrcPort, event.DstPort),
+		"community_id": GenerateCommunityID(
+			uint32ToNetIP(event.SrcIP),
+			uint32ToNetIP(event.DstIP),
+			event.SrcPort,
+			event.DstPort,
+			event.Protocol,
+			0),
 	}
 
 	return f.encoder.Encode(ecsEvent)
@@ -408,10 +415,17 @@ func (f *ECSFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pro
 
 	// Add correlation IDs in labels
 	ecsEvent.Labels = map[string]string{
-		"session_uid":     f.sessionUID,
-		"process_uid":     info.ProcessUID,
-		"network_uid":     GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
-		"conversation_id": event.ConversationID,
+		"session_uid": f.sessionUID,
+		"process_uid": info.ProcessUID,
+		"network_uid": GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
+		"community_id": GenerateCommunityID(
+			event.SourceIP,
+			event.DestIP,
+			event.SourcePort,
+			event.DestPort,
+			17, // UDP
+			0),
+		"conversation_uid": event.ConversationID,
 	}
 
 	return f.encoder.Encode(ecsEvent)
@@ -465,22 +479,16 @@ func (f *ECSFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pro
 		"session_uid": f.sessionUID,
 		"process_uid": info.ProcessUID,
 		"network_uid": GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort),
+		"community_id": GenerateCommunityID(
+			event.SourceIP,
+			event.DestIP,
+			event.SourcePort,
+			event.DestPort,
+			event.Protocol,
+			0),
 	}
 
 	return f.encoder.Encode(ecsEvent)
-}
-
-func (f *ECSFormatter) createBaseEvent() ecsEvent {
-	return ecsEvent{
-		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
-		Version:    "8.12.0", // Current ECS version
-		Dataset:    "bpfview",
-		Sequence:   f.sessionUID,
-		HostName:   f.hostname,
-		HostIP:     f.hostIP,
-		HostOS:     "linux",
-		HostKernel: "linux",
-	}
 }
 
 func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
@@ -602,11 +610,11 @@ func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	if match.NetworkUID != "" {
 		ecsEvent.Labels["network_uid"] = match.NetworkUID
 	}
-
-	if match.DetectionSource == "dns_query" {
-		if conversationID, ok := match.EventData["conversation_id"].(string); ok {
-			ecsEvent.Labels["dns_conversation_uid"] = conversationID
-		}
+	if match.ConversationID != "" {
+		ecsEvent.Labels["dns_conversation_uid"] = match.ConversationID
+	}
+	if match.CommunityID != "" {
+		ecsEvent.Labels["community_id"] = match.CommunityID
 	}
 
 	// Message formatting
@@ -618,4 +626,17 @@ func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	}
 
 	return f.encoder.Encode(ecsEvent)
+}
+
+func (f *ECSFormatter) createBaseEvent() ecsEvent {
+	return ecsEvent{
+		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		Version:    "8.12.0", // Current ECS version
+		Dataset:    "bpfview",
+		Sequence:   f.sessionUID,
+		HostName:   f.hostname,
+		HostIP:     f.hostIP,
+		HostOS:     "linux",
+		HostKernel: "linux",
+	}
 }
