@@ -9,9 +9,11 @@ replace github.com/jnesss/bpfview/outputformats => ./outputformats
 require (
 	github.com/bradleyjkemp/sigma-go v0.6.6
 	github.com/cilium/ebpf v0.18.0
+	github.com/dgraph-io/ristretto v0.2.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jnesss/bpfview/outputformats v0.0.0-00010101000000-000000000000
 	github.com/jnesss/bpfview/types v0.0.0-20250410184514-307cf1204dd8
+	github.com/prometheus/client_golang v1.22.0
 	github.com/spf13/cobra v1.9.1
 )
 
@@ -22,13 +24,11 @@ require (
 	github.com/alecthomas/participle v0.7.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/dgraph-io/ristretto v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-sqlite3 v1.14.27 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
