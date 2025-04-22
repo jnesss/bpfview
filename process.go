@@ -98,6 +98,8 @@ func handleProcessEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 }
 
 func handleProcessExitEvent(event *types.ProcessEvent) {
+	timer := NewEventTimer("process_exit")
+
 	// Check if we should ignore this exit
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	if shouldIgnoreProcessExit(comm) {
@@ -168,6 +170,9 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 		globalLogger.LogProcess(event, info, parentinfo)
 	}
 
+	// End timer before the sleep
+	timer.ObserveDuration()
+
 	// Remove process from cache one second later after processing EXIT
 	//  This delay preserves the cache for a process exec that might come out of order
 	time.Sleep(1 * time.Second)
@@ -178,6 +183,9 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 }
 
 func handleProcessForkEvent(event *types.ProcessEvent) {
+	timers := NewTimerPair("process_fork")
+	defer timers.ObserveDuration()
+
 	// Debug logging
 	globalLogger.Trace("process", "Processing FORK event for PID %d\n", event.Pid)
 
@@ -199,12 +207,14 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 
 	// Try up to 10 times with 5ms delay (50ms total max)
 	for i := 0; i < 10; i++ {
+		timers.IncrementAttempts()
 		parentInfo, parentExists = GetProcessFromCache(event.Ppid)
 		if parentExists {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	timers.StartProcessing(parentExists)
 
 	// If parent found, inherit its properties
 	if parentExists {
@@ -312,6 +322,9 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 }
 
 func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
+	timers := NewTimerPair("process_exec")
+	defer timers.ObserveDuration()
+
 	// Debug logging
 	globalLogger.Trace("process", "Processing EXEC event for PID %d\n", event.Pid)
 
@@ -345,6 +358,7 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	}
 
 	// First /proc check - may catch the process before exec is complete
+	timers.IncrementAttempts()
 	firstProcInfo := CollectProcMetadata(event.Pid)
 	MergeProcessInfo(info, firstProcInfo, "first")
 
@@ -352,10 +366,16 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	info.Username = GetUsernameFromUID(info.UID)
 
 	// Wait briefly for exec to complete
+	timers.IncrementAttempts()
 	time.Sleep(2 * time.Millisecond)
 
 	// Second /proc check - this should have the final state
+	timers.IncrementAttempts()
 	secondProcInfo := CollectProcMetadata(event.Pid)
+
+	// Now we're done with waits, start processing timer
+	timers.StartProcessing(true)
+
 	MergeProcessInfo(info, secondProcInfo, "second")
 
 	// Apply standard enrichment and finalization
@@ -648,7 +668,9 @@ func findAndCacheParentProcess(ppid uint32) *types.ProcessInfo {
 		// Explicitly set ParentComm from /proc if available
 		if info.ParentComm == "" && info.PPID > 0 {
 			parentProcDir := fmt.Sprintf("/proc/%d", info.PPID)
+			procReadsTotal.Inc() // os.Stat counts as a /proc read
 			if _, err := os.Stat(parentProcDir); err == nil {
+				procReadsTotal.Inc() // reading comm file is another /proc read
 				if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", parentProcDir)); err == nil {
 					info.ParentComm = strings.TrimSpace(string(commBytes))
 				}
@@ -671,20 +693,23 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 	}
 
 	procDir := fmt.Sprintf("/proc/%d", pid)
+	procReadsTotal.Inc()
 	if _, err := os.Stat(procDir); os.IsNotExist(err) {
 		return info
 	}
 
+	procReadsTotal.Inc()
 	if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", procDir)); err == nil {
 		info.Comm = strings.TrimSpace(string(commBytes))
 		globalLogger.Trace("process", "PID %d: Read comm from /proc: [%v]\n", pid, info.Comm)
 	}
 
-	// Get only the basic fields needed from /proc
+	procReadsTotal.Inc()
 	if exePath, err := os.Readlink(fmt.Sprintf("%s/exe", procDir)); err == nil {
 		info.ExePath = exePath
 	}
 
+	procReadsTotal.Inc()
 	if cmdlineBytes, err := os.ReadFile(fmt.Sprintf("%s/cmdline", procDir)); err == nil && len(cmdlineBytes) > 0 {
 		args := bytes.Split(cmdlineBytes, []byte{0})
 		var cmdArgs []string
@@ -698,11 +723,13 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 		}
 	}
 
+	procReadsTotal.Inc()
 	if cwd, err := os.Readlink(fmt.Sprintf("%s/cwd", procDir)); err == nil {
 		info.WorkingDir = cwd
 	}
 
 	// Extract UID/GID/PPID from status
+	procReadsTotal.Inc()
 	if statusData, err := os.ReadFile(fmt.Sprintf("%s/status", procDir)); err == nil {
 		lines := strings.Split(string(statusData), "\n")
 		for _, line := range lines {
@@ -770,6 +797,7 @@ func EnrichProcessInfo(info *types.ProcessInfo) {
 	// Get container ID if not already set
 	if info.ContainerID == "" {
 		procDir := fmt.Sprintf("/proc/%d", info.PID)
+		procReadsTotal.Inc()
 		if cgroupData, err := os.ReadFile(fmt.Sprintf("%s/cgroup", procDir)); err == nil {
 			lines := strings.Split(string(cgroupData), "\n")
 			for _, line := range lines {
@@ -792,6 +820,7 @@ func EnrichProcessInfo(info *types.ProcessInfo) {
 
 	// Get parent command if not already set
 	if info.ParentComm == "" && info.PPID > 0 {
+		procReadsTotal.Inc()
 		parentProcDir := fmt.Sprintf("/proc/%d", info.PPID)
 		if _, err := os.Stat(parentProcDir); err == nil {
 			if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", parentProcDir)); err == nil {
@@ -813,6 +842,7 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 
 	// Set start time if not already set
 	if info.StartTime.IsZero() {
+		procReadsTotal.Inc()
 		if stat, err := os.Stat(fmt.Sprintf("/proc/%d", info.PID)); err == nil {
 			info.StartTime = stat.ModTime()
 		} else {
@@ -841,6 +871,7 @@ func CompleteProcessInfo(info *types.ProcessInfo) *types.ProcessInfo {
 
 // readProcFile reads a file from /proc and returns its contents
 func readProcFile(pid uint32, filename string) (string, error) {
+	procReadsTotal.Inc()
 	data, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/%s", pid, filename))
 	if err != nil {
 		return "", err
@@ -850,6 +881,7 @@ func readProcFile(pid uint32, filename string) (string, error) {
 
 // getProcessEnvironment reads and parses environment variables
 func getProcessEnvironment(pid uint32) ([]string, error) {
+	procReadsTotal.Inc()
 	data, err := readProcFile(pid, "environ")
 	if err != nil {
 		return nil, err
@@ -916,6 +948,10 @@ func sanitizeCommandLine(cmdline string) string {
 }
 
 func initializeProcessCache() {
+	timer := NewEventTimer("cache_init")
+	defer timer.ObserveDuration()
+
+	procReadsTotal.Inc()
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		log.Printf("Error reading /proc: %v", err)
