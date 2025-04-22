@@ -18,6 +18,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,10 +33,31 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 
 	"github.com/jnesss/bpfview/outputformats"
 	"github.com/jnesss/bpfview/types"
+)
+
+var (
+	eventCounter = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_events_total",
+			Help: "Total number of events processed by type",
+		},
+		[]string{"event_type"},
+	)
+
+	eventProcessingErrors = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_processing_errors_total",
+			Help: "Total number of event processing errors by type",
+		},
+		[]string{"event_type"},
+	)
 )
 
 type bpfObjects struct {
@@ -479,6 +501,11 @@ For more details and examples, visit: https://github.com/jnesss/bpfview`)
 	h.Write([]byte(fmt.Sprintf("%s-%d", time.Now().Format(time.RFC3339Nano), os.Getpid())))
 	globalSessionUid = fmt.Sprintf("%x", h.Sum32())
 
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(":2112", nil)
+	}()
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -602,12 +629,9 @@ func processEvents(ctx context.Context, rc readerContext) error {
 }
 
 func handleEvent(data []byte, rc readerContext) error {
-	// Print raw data for debugging
-	// fmt.Printf("\nRaw event data from %s (%d bytes): ", rc.name, len(data))
-	//for i := 0; i < min(len(data), 32); i++ {
-	//	fmt.Printf("%02x ", data[i])
-	//}
-	//fmt.Printf("\n")
+	eventCounter.With(prometheus.Labels{
+		"event_type": rc.name,
+	}).Inc()
 
 	// Read event type
 	var header types.EventHeader
@@ -620,6 +644,9 @@ func handleEvent(data []byte, rc readerContext) error {
 	case types.EVENT_PROCESS_EXEC, types.EVENT_PROCESS_EXIT, types.EVENT_PROCESS_FORK:
 		var event types.ProcessEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			eventProcessingErrors.With(prometheus.Labels{
+				"event_type": "process",
+			}).Inc()
 			return fmt.Errorf("error parsing process event: %w", err)
 		}
 		// Pass the execve objects to handleProcessEvent
@@ -633,6 +660,9 @@ func handleEvent(data []byte, rc readerContext) error {
 	case types.EVENT_NET_CONNECT, types.EVENT_NET_ACCEPT, types.EVENT_NET_BIND:
 		var event types.NetworkEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			eventProcessingErrors.With(prometheus.Labels{
+				"event_type": "network",
+			}).Inc()
 			return fmt.Errorf("error parsing network event: %w", err)
 		}
 		handleNetworkEvent(&event)
@@ -640,6 +670,9 @@ func handleEvent(data []byte, rc readerContext) error {
 	case types.EVENT_DNS:
 		var event types.BPFDNSRawEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			eventProcessingErrors.With(prometheus.Labels{
+				"event_type": "dns",
+			}).Inc()
 			return fmt.Errorf("error parsing DNS event: %w", err)
 		}
 		handleDNSEvent(&event)
@@ -647,6 +680,9 @@ func handleEvent(data []byte, rc readerContext) error {
 	case types.EVENT_TLS:
 		var event types.BPFTLSEvent
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			eventProcessingErrors.With(prometheus.Labels{
+				"event_type": "tls",
+			}).Inc()
 			return fmt.Errorf("error parsing TLS event: %w", err)
 		}
 		handleTLSEvent(&event)
@@ -662,6 +698,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			RestrictionFlags uint32
 		}
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &event); err != nil {
+			eventProcessingErrors.With(prometheus.Labels{
+				"event_type": "response",
+			}).Inc()
 			return fmt.Errorf("error parsing response event: %w", err)
 		}
 
@@ -681,6 +720,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			action, event.Pid, event.RestrictionFlags)
 
 	default:
+		eventProcessingErrors.With(prometheus.Labels{
+			"event_type": "unknown",
+		}).Inc()
 		return fmt.Errorf("unknown event type: %d", header.EventType)
 	}
 
