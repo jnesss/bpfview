@@ -47,6 +47,9 @@ func protocolToString(proto uint8) string {
 
 // handleNetworkEvent processes network connection events
 func handleNetworkEvent(event *types.NetworkEvent) {
+	timers := NewTimerPair("network")
+	defer timers.ObserveDuration()
+
 	// Filter check right at the start
 	if globalEngine != nil && !globalEngine.matchNetwork(event) {
 		return
@@ -61,12 +64,16 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 
 	// Try up to 10 times with 5ms delay (50ms total max)
 	for i := 0; i < 10; i++ {
+		timers.IncrementAttempts()
+
 		processInfo, exists = GetProcessFromCache(event.Pid)
 		if exists {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+
+	timers.StartProcessing(exists)
 
 	if !exists {
 		// Use minimal info if we still can't find process
