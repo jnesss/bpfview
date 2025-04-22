@@ -119,6 +119,13 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 
 	// Generate connection ID (same as network connection uid)
 	uid := outputformats.GenerateBidirectionalConnID(event.Pid, event.Ppid, userEvent.SourceIP, userEvent.DestIP, event.SPort, event.DPort)
+	communityID := outputformats.GenerateCommunityID(
+		userEvent.SourceIP,
+		userEvent.DestIP,
+		event.SPort,
+		event.DPort,
+		17, // UDP
+		0)  // default seed
 
 	// Print the event
 	eventType := "QUERY"
@@ -179,6 +186,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 
 				// these are used for correlation only
 				"network_uid":     uid,
+				"community_id":    communityID,
 				"conversation_id": userEvent.ConversationID,
 			}
 
