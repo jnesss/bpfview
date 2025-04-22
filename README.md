@@ -1101,6 +1101,59 @@ BPFView is built with several core design principles in mind:
 5. **Minimal Performance Impact**: Efficient BPF programs with low overhead
 6. **No External Dependencies**: Single binary with no runtime dependencies
 
+## Prometheus Metrics
+
+BPFView exposes Prometheus metrics on port 2112 for monitoring event processing:
+
+```bash
+# View metrics
+curl localhost:2112/metrics
+```
+
+### Available Metrics
+
+| Metric Name | Labels | Description |
+|-------------|--------|-------------|
+| bpfview_events_total | event_type | Total number of events processed by type (process, network, dns, tls, response) |
+| bpfview_processing_errors_total | event_type | Total number of event processing errors by type |
+
+### Example Output
+
+```
+# HELP bpfview_events_total Total number of events processed by type
+# TYPE bpfview_events_total counter
+bpfview_events_total{event_type="dns"} 4
+bpfview_events_total{event_type="network"} 680
+bpfview_events_total{event_type="process"} 929
+bpfview_events_total{event_type="tls"} 1
+
+# HELP bpfview_processing_errors_total Total number of event processing errors by type
+# TYPE bpfview_processing_errors_total counter
+bpfview_processing_errors_total{event_type="dns"} 0
+bpfview_processing_errors_total{event_type="network"} 2
+bpfview_processing_errors_total{event_type="process"} 0
+bpfview_processing_errors_total{event_type="tls"} 0
+```
+
+### Prometheus Configuration
+
+Add this job to your Prometheus config to scrape BPFView metrics:
+
+```yaml
+scrape_configs:
+  - job_name: 'bpfview'
+    static_configs:
+      - targets: ['localhost:2112']
+```
+
+These metrics enable monitoring of:
+
+- Event processing volume by type
+- Error rates and types
+- System health and performance
+
+The metrics endpoint is automatically enabled when BPFView starts, with no additional configuration required.
+
 ## Feature Comparison
 
 | Feature | BPFView | tcpdump | Wireshark | bcc/BPF Tools |
