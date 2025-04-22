@@ -49,6 +49,7 @@ type gelfMessage struct {
 	ProcessUID     string `json:"_process_uid,omitempty"`
 	NetworkUID     string `json:"_network_uid,omitempty"`
 	ConversationID string `json:"_conversation_id,omitempty"`
+	CommunityID    string `json:"_community_id,omitempty"`
 
 	// Process-specific fields
 	ProcessID       int32  `json:"_process_id"`
@@ -215,6 +216,13 @@ func (f *GELFFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
+	msg.CommunityID = GenerateCommunityID(
+		uint32ToNetIP(event.SrcIP),
+		uint32ToNetIP(event.DstIP),
+		event.SrcPort,
+		event.DstPort,
+		event.Protocol,
+		0) // default seed
 
 	// Basic process info
 	msg.ProcessID = int32(event.Pid)
@@ -311,6 +319,13 @@ func (f *GELFFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
 	msg.ConversationID = event.ConversationID
+	msg.CommunityID = GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		17, // UDP
+		0)  // default seed
 
 	// Process info
 	msg.ProcessID = int32(event.Pid)
@@ -412,6 +427,13 @@ func (f *GELFFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	msg.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
+	msg.CommunityID = GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		event.Protocol,
+		0) // default seed
 
 	// Process info
 	msg.ProcessID = int32(event.Pid)
@@ -495,7 +517,6 @@ func (f *GELFFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	}
 
 	// Add process context
-	msg.ProcessUID = match.ProcessUID
 	msg.ProcessID = int32(match.PID)
 	if match.ProcessInfo != nil {
 		msg.ProcessName = match.ProcessInfo.Comm
@@ -504,6 +525,11 @@ func (f *GELFFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 		msg.ParentID = int32(match.ProcessInfo.PPID)
 		msg.Username = match.ProcessInfo.Username
 	}
+
+	// Add correlation IDs
+	msg.ProcessUID = match.ProcessUID
+	msg.CommunityID = match.CommunityID
+	msg.ConversationID = match.ConversationID
 
 	// Create short message (appears in log overview)
 	msg.ShortMessage = fmt.Sprintf("sigma_match: %s (Level: %s)",
@@ -563,4 +589,3 @@ func (f *GELFFormatter) getHostname() string {
 	// Final fallback
 	return "unknown"
 }
-

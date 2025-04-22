@@ -3,6 +3,8 @@ package outputformats
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
@@ -114,6 +116,53 @@ func GenerateBidirectionalConnID(pid uint32, ppid uint32, ip1 net.IP, ip2 net.IP
 	binary.Write(h, binary.LittleEndian, port1)
 	binary.Write(h, binary.LittleEndian, port2)
 	return fmt.Sprintf("%016x", h.Sum64())
+}
+
+func GenerateCommunityID(sIP, dIP net.IP, sPort, dPort uint16, proto uint8, seed uint16) string {
+	// Get the packed bytes in network byte order
+	seedBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(seedBytes, seed)
+
+	// Ensure IPs are 4 or 16 bytes
+	sAddr := sIP.To4()
+	if sAddr == nil {
+		sAddr = sIP.To16()
+	}
+	dAddr := dIP.To4()
+	if dAddr == nil {
+		dAddr = dIP.To16()
+	}
+
+	// Order endpoints so smaller IP:port comes first
+	if bytes.Compare(sAddr, dAddr) > 0 ||
+		(bytes.Equal(sAddr, dAddr) && sPort > dPort) {
+		// Swap endpoints
+		sAddr, dAddr = dAddr, sAddr
+		sPort, dPort = dPort, sPort
+	}
+
+	// Allocate buffer for hash input
+	// seed(2) + saddr(4/16) + daddr(4/16) + proto(1) + pad(1) + sport(2) + dport(2)
+	buf := new(bytes.Buffer)
+
+	// Write in network byte order
+	buf.Write(seedBytes)
+	buf.Write(sAddr)
+	buf.Write(dAddr)
+	buf.WriteByte(proto)
+	buf.WriteByte(0) // padding
+	binary.Write(buf, binary.BigEndian, sPort)
+	binary.Write(buf, binary.BigEndian, dPort)
+
+	// Calculate SHA1
+	h := sha1.New()
+	h.Write(buf.Bytes())
+
+	// Base64 encode
+	b64 := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+	// Return version 1 prefix with base64 hash
+	return fmt.Sprintf("1:%s", b64)
 }
 
 // Protocol type conversion

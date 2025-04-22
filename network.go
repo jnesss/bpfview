@@ -103,10 +103,19 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 
 	if globalSigmaEngine != nil {
 
+		srcIPIP := uint32ToNetIP(event.SrcIP)
+		dstIPIP := uint32ToNetIP(event.DstIP)
 		networkUID := outputformats.GenerateBidirectionalConnID(event.Pid, event.Ppid,
-			uint32ToNetIP(event.SrcIP),
-			uint32ToNetIP(event.DstIP),
+			srcIPIP,
+			dstIPIP,
 			event.SrcPort, event.DstPort)
+		communityID := outputformats.GenerateCommunityID(
+			srcIPIP,
+			dstIPIP,
+			event.SrcPort,
+			event.DstPort,
+			event.Protocol,
+			0) // default seed
 
 		// Map fields for Sigma detection
 		sigmaEvent := map[string]interface{}{
@@ -123,7 +132,8 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 			"Initiated":       event.Direction == types.FLOW_EGRESS,
 
 			// Correlation ID
-			"network_uid": networkUID,
+			"network_uid":  networkUID,
+			"community_id": communityID,
 		}
 
 		if event.Direction == types.FLOW_EGRESS {

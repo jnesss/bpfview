@@ -223,6 +223,8 @@ type SigmaMatch struct {
 	RuleLevel       string
 	ProcessUID      string
 	NetworkUID      string
+	ConversationID  string
+	CommunityID     string
 	PID             uint32
 	ProcessInfo     *ProcessInfo // May be nil if process no longer in cache
 	ParentInfo      *ProcessInfo // May also be nil if parent is no longer in cache
@@ -234,4 +236,3 @@ type SigmaMatch struct {
 	DetectionSource string // "dns_query" or "network_connection" or "process_creation"
 	ResponseActions []string
 }
-

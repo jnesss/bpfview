@@ -193,6 +193,16 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 				match.NetworkUID = networkUID
 			}
 
+			// Add community id correlation if available
+			if communityID, ok := evt.Data["community_id"].(string); ok {
+				match.CommunityID = communityID
+			}
+
+			// Add DNS conversation correlation if available
+			if conversationID, ok := evt.Data["conversation_id"].(string); ok {
+				match.ConversationID = conversationID
+			}
+
 			// Handle any response actions defined in the rule
 			if actions, ok := evaluator.Rule.AdditionalFields["actions"].([]interface{}); ok {
 				var flags uint32

@@ -102,6 +102,7 @@ func initSchema(db *sql.DB) error {
 		session_uid TEXT NOT NULL,
 		process_uid TEXT NOT NULL,
 		network_uid TEXT NOT NULL,
+        community_id TEXT NOT NULL,
 		timestamp DATETIME NOT NULL,
 		pid INTEGER NOT NULL,
 		comm TEXT NOT NULL,
@@ -128,6 +129,7 @@ func initSchema(db *sql.DB) error {
 		session_uid TEXT NOT NULL,
 		process_uid TEXT NOT NULL,
 		network_uid TEXT NOT NULL,
+        community_id TEXT NOT NULL,
 		conversation_uid TEXT NOT NULL,
 		timestamp DATETIME NOT NULL,
 		pid INTEGER NOT NULL,
@@ -159,6 +161,7 @@ func initSchema(db *sql.DB) error {
 		session_uid TEXT NOT NULL,
 		process_uid TEXT NOT NULL,
 		network_uid TEXT NOT NULL,
+        community_id TEXT NOT NULL,
 		timestamp DATETIME NOT NULL,
 		pid INTEGER NOT NULL,
 		comm TEXT NOT NULL,
@@ -188,6 +191,8 @@ func initSchema(db *sql.DB) error {
 		session_uid TEXT NOT NULL,
 		process_uid TEXT NOT NULL,
 		network_uid TEXT,
+        community_id TEXT,
+		conversation_uid TEXT,
 		timestamp DATETIME NOT NULL,
 		rule_id TEXT NOT NULL,
 		rule_name TEXT NOT NULL,
@@ -303,16 +308,23 @@ func (f *SQLiteFormatter) FormatNetwork(event *types.NetworkEvent, info *types.P
 		event.Pid, event.Ppid,
 		uint32ToNetIP(event.SrcIP), uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
+	communityID := GenerateCommunityID(
+		uint32ToNetIP(event.SrcIP),
+		uint32ToNetIP(event.DstIP),
+		event.SrcPort,
+		event.DstPort,
+		event.Protocol,
+		0) // default seed
 
 	// Insert into database
 	_, err := f.db.Exec(`
         INSERT INTO network_connections (
-            session_uid, process_uid, network_uid, timestamp,
-            pid, comm, ppid, parent_comm, protocol,
+            session_uid, process_uid, network_uid, community_id, 
+            timestamp, pid, comm, ppid, parent_comm, protocol,
             src_ip, src_port, dst_ip, dst_port,
             direction, bytes, tcp_flags
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, networkUID,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.sessionUID, info.ProcessUID, networkUID, communityID,
 		BpfTimestampToTime(event.Timestamp),
 		event.Pid, comm, event.Ppid, parentComm,
 		protocolToString(event.Protocol),
@@ -343,6 +355,13 @@ func (f *SQLiteFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.
 		event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
+	communityID := GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		17, // UDP
+		0)  // default seed
 
 	// Get query and type from first question
 	var query, recordType string
@@ -354,13 +373,13 @@ func (f *SQLiteFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.
 	// Insert into database
 	_, err = f.db.Exec(`
 		INSERT INTO dns_events (
-			session_uid, process_uid, network_uid, conversation_uid,
+			session_uid, process_uid, network_uid, conversation_uid, community_id,
 			timestamp, pid, comm, ppid, parent_comm,
 			event_type, dns_flags, query, record_type,
 			transaction_id, src_ip, src_port, dst_ip, dst_port,
 			answers, ttl
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, networkUID, event.ConversationID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.sessionUID, info.ProcessUID, networkUID, event.ConversationID, communityID,
 		BpfTimestampToTime(event.Timestamp),
 		event.Pid, event.Comm, event.Ppid, event.ParentComm,
 		map[bool]string{true: "response", false: "query"}[event.IsResponse],
@@ -394,17 +413,24 @@ func (f *SQLiteFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.
 		event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
+	communityID := GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		event.Protocol,
+		0) // default seed
 
 	// Insert into database
 	_, err = f.db.Exec(`
 		INSERT INTO tls_events (
-			session_uid, process_uid, network_uid, timestamp,
-			pid, comm, ppid, parent_comm,
+			session_uid, process_uid, network_uid, community_id,
+            timestamp, pid, comm, ppid, parent_comm,
 			src_ip, src_port, dst_ip, dst_port,
 			version, sni, cipher_suites, supported_groups,
 			handshake_length, ja4, ja4_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, networkUID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.sessionUID, info.ProcessUID, networkUID, communityID,
 		BpfTimestampToTime(event.Timestamp),
 		event.Pid, event.Comm, event.Ppid, event.ParentComm,
 		event.SourceIP.String(), event.SourcePort,
@@ -443,13 +469,14 @@ func (f *SQLiteFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	// Insert into database
 	_, err = f.db.Exec(`
 		INSERT INTO sigma_matches (
-			session_uid, process_uid, network_uid, timestamp,
-			rule_id, rule_name, rule_level, rule_description,
+			session_uid, process_uid, network_uid, 
+            community_id, conversation_uid, timestamp, 
+            rule_id, rule_name, rule_level, rule_description,
 			match_details, detection_source, event_data,
 			rule_references, rule_tags
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.sessionUID, match.ProcessUID, match.NetworkUID,
-		match.Timestamp,
+		match.CommunityID, match.ConversationID, match.Timestamp,
 		match.RuleID, match.RuleName, match.RuleLevel,
 		match.RuleDescription,
 		match.MatchedFields["details"],
