@@ -57,13 +57,14 @@ type ProcessJSON struct {
 }
 
 type NetworkJSON struct {
-	Timestamp  string    `json:"timestamp"`
-	SessionUID string    `json:"session_uid"`
-	Host       *HostInfo `json:"host,omitempty"`
-	EventType  string    `json:"event_type"` // Add this
-	ProcessUID string    `json:"process_uid"`
-	NetworkUID string    `json:"network_uid"`
-	Process    struct {
+	Timestamp   string    `json:"timestamp"`
+	SessionUID  string    `json:"session_uid"`
+	Host        *HostInfo `json:"host,omitempty"`
+	EventType   string    `json:"event_type"`
+	ProcessUID  string    `json:"process_uid"`
+	NetworkUID  string    `json:"network_uid"`
+	CommunityID string    `json:"community_id"`
+	Process     struct {
 		PID        uint32 `json:"pid"`
 		Comm       string `json:"comm"`
 		PPID       uint32 `json:"ppid"`
@@ -90,6 +91,7 @@ type DNSJSON struct {
 	EventType      string    `json:"event_type"`
 	ProcessUID     string    `json:"process_uid"`
 	NetworkUID     string    `json:"network_uid"`
+	CommunityID    string    `json:"community_id"`
 	ConversationID string    `json:"dns_conversation_uid"`
 	Process        struct {
 		PID        uint32 `json:"pid"`
@@ -128,13 +130,14 @@ type DNSAnswerJSON struct {
 }
 
 type TLSJSON struct {
-	Timestamp  string    `json:"timestamp"`
-	SessionUID string    `json:"session_uid"`
-	Host       *HostInfo `json:"host,omitempty"`
-	EventType  string    `json:"event_type"`
-	ProcessUID string    `json:"process_uid"`
-	NetworkUID string    `json:"network_uid"`
-	Process    struct {
+	Timestamp   string    `json:"timestamp"`
+	SessionUID  string    `json:"session_uid"`
+	Host        *HostInfo `json:"host,omitempty"`
+	EventType   string    `json:"event_type"`
+	ProcessUID  string    `json:"process_uid"`
+	NetworkUID  string    `json:"network_uid"`
+	CommunityID string    `json:"community_id"`
+	Process     struct {
 		PID        uint32 `json:"pid"`
 		Comm       string `json:"comm"`
 		PPID       uint32 `json:"ppid"`
@@ -163,6 +166,7 @@ type TLSJSON struct {
 type NetworkInfo struct {
 	NetworkUID     string `json:"network_uid,omitempty"`
 	ConversationID string `json:"dns_conversation_uid,omitempty"`
+	CommunityID    string `json:"community_id,omitempty"`
 	Protocol       string `json:"protocol,omitempty"`
 	SourceIP       string `json:"source_ip,omitempty"`
 	SourcePort     uint16 `json:"source_port,omitempty"`
@@ -218,6 +222,7 @@ type SigmaMatchJSON struct {
 		ParentUID      string `json:"parent_uid,omitempty"`
 		NetworkUID     string `json:"network_uid,omitempty"`
 		ConversationID string `json:"dns_conversation_uid,omitempty"`
+		CommunityID    string `json:"community_id,omitempty"`
 	} `json:"labels"`
 }
 
@@ -336,6 +341,13 @@ func (f *JSONFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		uint32ToNetIP(event.SrcIP),
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
+	jsonEvent.CommunityID = GenerateCommunityID(
+		uint32ToNetIP(event.SrcIP),
+		uint32ToNetIP(event.DstIP),
+		event.SrcPort,
+		event.DstPort,
+		event.Protocol,
+		0) // default seed
 
 	// Fill process info
 	jsonEvent.Process.PID = event.Pid
@@ -396,6 +408,13 @@ func (f *JSONFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
+	jsonEvent.CommunityID = GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		17, // UDP
+		0)  // default seed
 
 	// Process info
 	jsonEvent.Process.PID = event.Pid
@@ -487,6 +506,13 @@ func (f *JSONFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 	jsonEvent.NetworkUID = GenerateBidirectionalConnID(event.Pid, event.Ppid,
 		event.SourceIP, event.DestIP,
 		event.SourcePort, event.DestPort)
+	jsonEvent.CommunityID = GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		event.Protocol,
+		0) // default seed
 
 	// Process info
 	jsonEvent.Process.PID = event.Pid
@@ -616,8 +642,9 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 		// Core correlation IDs
 		networkInfo.NetworkUID = match.NetworkUID
-		if conversationID, ok := match.EventData["conversation_id"].(string); ok {
-			networkInfo.ConversationID = conversationID
+		networkInfo.CommunityID = match.CommunityID
+		if match.ConversationID != "" {
+			networkInfo.ConversationID = match.ConversationID
 		}
 
 		// Network details
@@ -663,10 +690,9 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	}
 	if match.DetectionSource == "network_connection" || match.DetectionSource == "dns_query" {
 		jsonEvent.Labels.NetworkUID = match.NetworkUID
-		if match.DetectionSource == "dns_query" {
-			if convID, ok := match.EventData["conversation_id"].(string); ok {
-				jsonEvent.Labels.ConversationID = convID
-			}
+		jsonEvent.Labels.CommunityID = match.CommunityID
+		if match.ConversationID != "" {
+			jsonEvent.Labels.ConversationID = match.ConversationID
 		}
 	}
 
