@@ -33,6 +33,7 @@ sudo bpfview --sigma ./sigma
 ## Key Features
 
 - **Process Attribution**: Every network connection, DNS query, and TLS handshake is linked to its originating process
+- **Community ID Flow Hashing**: Standard network flow correlation compatible with Zeek, Suricata, and other security tools
 - **Binary Integrity**: Track and filter processes by executable MD5 hash
 - **Container Awareness**: Automatic container detection and correlation
 - **Environment Capture**: Full process environment variable tracking
@@ -105,26 +106,27 @@ timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_c
 2025-04-15T19:58:47.674451292Z|26d27091|b43317c5|EXEC|323583|311463|1000|1000|xmrig|bash|/tmp/mining_test/xmrig-6.21.0/xmrig|86f2790c04ccd113a564cc074efbcdfd|./xmrig -o pool.minexmr.com:443 -u 44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A|ec2-user|-|/tmp/mining_test/xmrig-6.21.0|2025-04-15T19:58:47.674451292Z|-|-|-
 
 # network.log
-timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags
-2025-04-15T19:58:47.681084478Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62|-
-2025-04-15T19:58:47.681110696Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62|-
-2025-04-15T19:58:47.682173283Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122|-
-2025-04-15T19:58:47.684441294Z|26d27091|b43317c5|d6cce83a127971e8|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122|-
+timestamp|session_uid|process_uid|network_uid|community_id|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags
+2025-04-15T19:58:47.681084478Z|26d27091|b43317c5|d6cce83a127971e8|1:YSCxg8y33TGKoRN5q1SXHK0f9XY=|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62|-
+2025-04-15T19:58:47.681110696Z|26d27091|b43317c5|d6cce83a127971e8|1:YSCxg8y33TGKoRN5q1SXHK0f9XY=|323583|xmrig|311463|bash|UDP|172.31.44.65|44355|172.31.0.2|53|>|62|-
+2025-04-15T19:58:47.682173283Z|26d27091|b43317c5|d6cce83a127971e8|1:YSCxg8y33TGKoRN5q1SXHK0f9XY=|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122|-
+2025-04-15T19:58:47.684441294Z|26d27091|b43317c5|d6cce83a127971e8|1:YSCxg8y33TGKoRN5q1SXHK0f9XY=|323583|xmrig|311463|bash|UDP|172.31.0.2|53|172.31.44.65|44355|<|122|-
 
 # dns.log
-timestamp|session_uid|process_uid|network_uid|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl
-2025-04-15T19:58:47.681099506Z|26d27091|b43317c5|d6cce83a127971e8|82afc580|323583|xmrig|311463|bash|QUERY|0x0100|pool.minexmr.com|A|0xbca7|172.31.44.65|44355|172.31.0.2|53|-|-
-2025-04-15T19:58:47.681112099Z|26d27091|b43317c5|d6cce83a127971e8|8e9244b8|323583|xmrig|311463|bash|QUERY|0x0100|pool.minexmr.com|AAAA|0x719b|172.31.44.65|44355|172.31.0.2|53|-|-
+timestamp|session_uid|process_uid|network_uid|community_id|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl
+2025-04-15T19:58:47.681099506Z|26d27091|b43317c5|d6cce83a127971e8|1:YSCxg8y33TGKoRN5q1SXHK0f9XY=|82afc580|323583|xmrig|311463|bash|QUERY|0x0100|pool.minexmr.com|A|0xbca7|172.31.44.65|44355|172.31.0.2|53|-|-
+2025-04-15T19:58:47.681112099Z|26d27091|b43317c5|d6cce83a127971e8|1:YSCxg8y33TGKoRN5q1SXHK0f9XY=|8e9244b8|323583|xmrig|311463|bash|QUERY|0x0100|pool.minexmr.com|AAAA|0x719b|172.31.44.65|44355|172.31.0.2|53|-|-
 
 # sigma.log
-timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_score|rule_description|match_details|mitre_tactics|mitre_techniques|process_uid|process_name|process_path|process_cmdline|process_hash|process_start_time|pid|username|working_dir|parent_process_uid|parent_name|parent_path|parent_cmdline|parent_hash|parent_start_time|ppid|network_uid|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc|container_id|rule_references|tags
-2025-04-15T19:58:47.681099506Z|26d27091|dns_query|a46c93b7-55ed-4d27-a41b-c259456c4746|Linux Crypto Mining Pool Connections|high|70|Detects process connections to a Monero crypto mining pool|'DestinationHostname' equals 'pool.minexmr.com'|Impact|T1496|b43317c5|xmrig|/tmp/mining_test/xmrig-6.21.0/xmrig|./xmrig -o pool.minexmr.com:443 -u 44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A|86f2790c04ccd113a564cc074efbcdfd|2025-04-15T19:58:47.674451292Z|323583|ec2-user|/tmp/mining_test/xmrig-6.21.0|90ed22d6|bash|/usr/bin/bash|-bash|abb8abb399698492682001a40813ebb5|2025-04-15T15:12:52.770964662Z|311463|d6cce83a127971e8|82afc580|172.31.44.65|44355|172.31.0.2|53|UDP|egress|Outgoing traffic to external service|-|https://www.poolwatch.io/coin/monero|
+timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_score|rule_description|match_details|mitre_tactics|mitre_techniques|process_uid|process_name|process_path|process_cmdline|process_hash|process_start_time|pid|username|working_dir|parent_process_uid|parent_name|parent_path|parent_cmdline|parent_hash|parent_start_time|ppid|network_uid|community_id|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc|container_id|rule_references|tags
+2025-04-15T19:58:47.681099506Z|26d27091|dns_query|a46c93b7-55ed-4d27-a41b-c259456c4746|Linux Crypto Mining Pool Connections|high|70|Detects process connections to a Monero crypto mining pool|'DestinationHostname' equals 'pool.minexmr.com'|Impact|T1496|b43317c5|xmrig|/tmp/mining_test/xmrig-6.21.0/xmrig|./xmrig -o pool.minexmr.com:443 -u 44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A|86f2790c04ccd113a564cc074efbcdfd|2025-04-15T19:58:47.674451292Z|323583|ec2-user|/tmp/mining_test/xmrig-6.21.0|90ed22d6|bash|/usr/bin/bash|-bash|abb8abb399698492682001a40813ebb5|2025-04-15T15:12:52.770964662Z|311463|d6cce83a127971e8|1:YSCxg8y33TGKoRN5q1SXHK0f9XY=|82afc580|172.31.44.65|44355|172.31.0.2|53|UDP|egress|Outgoing traffic to external service|-|https://www.poolwatch.io/coin/monero|
 ```
 
 #### Correlation IDs listed above:
 - session_uid ```26d27091```:  Identifies all events captured during this bpfview session
 - process_uid ```b43317c5```:  Uniquely identifies the process involved across all log files
 - network_uid ```d6cce83a127971e8```:  Correlates the network resquest/response, the DNS conversation, and the Sigma detection match
+- community_id ```1:YSCxg8y33TGKoRN5q1SXHK0f9XY=```: Correlates the network, DNS, TLS, and Sigma results to external log sources
 - dns_conversation_uid ```d6cce83a127971e8```:  Identifies the request and response for the A record for pool.minexmr.com
 
 ### JSON Output Format
@@ -156,7 +158,7 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
 }
 ```
 
-#### DNS Network Connection
+#### Network Connection for DNS lookup
 ```json
 {
   "timestamp": "2025-04-15T20:15:06.963020024Z",
@@ -164,6 +166,7 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   "event_type": "network_flow",
   "process_uid": "4fe5046b",
   "network_uid": "0f566ba38e122f9d",
+  "community_id": "1:d/FNBJhX+PP7t/O6DEMHrGsG7y0="
   "process": {
     "pid": 324331,
     "comm": "xmrig",
@@ -192,6 +195,7 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   "event_type": "dns_query",
   "process_uid": "4fe5046b",
   "network_uid": "0f566ba38e122f9d",
+  "community_id": "1:d/FNBJhX+PP7t/O6DEMHrGsG7y0=",
   "dns_conversation_uid": "84ad6a0e",
   "process": {
     "pid": 324331,
@@ -300,6 +304,7 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
   },
   "network": {
     "network_uid": "0f566ba38e122f9d",
+    "community_id": "1:d/FNBJhX+PP7t/O6DEMHrGsG7y0=",
     "dns_conversation_uid": "84ad6a0e",
     "source_ip": "172.31.44.65",
     "source_port": 59267,
@@ -315,6 +320,7 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
     "process_uid": "4fe5046b",
     "parent_uid": "90ed22d6",
     "network_uid": "0f566ba38e122f9d",
+    "community_id": "1:d/FNBJhX+PP7t/O6DEMHrGsG7y0=",
     "dns_conversation_uid": "84ad6a0e"
   }
 }
@@ -654,6 +660,7 @@ BPFView generates structured logs with shared identifiers that enable powerful c
 * **session_uid**: Unique identifier for each BPFView run (e.g., `60d6378b`)
 * **process_uid**: Consistent identifier for a process across all log types (e.g., `907271e5`)
 * **network_uid**: Unique identifier for each network connection (e.g., `db79358f24023b06`)
+* **community_id**: Standardized network flow identifier compatible with Zeek, Suricata, and other network security tools (e.g., `1:DGVS3V8Lu7Pj+BRFwP5vh1+WX6g=`)
 * **dns_conversation_uid**: Links DNS queries with their responses (e.g., `5551529`)
 
 ### Complete Log Examples
@@ -669,44 +676,44 @@ timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_c
 #### Network Events (network.log)
 ```
 # Network connections with process attribution and byte counts and TCP flags
-timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags
-2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60|SYN
-2025-04-15T20:21:13.938474097Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|60|SYN,ACK
-2025-04-15T20:21:13.938510735Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|52|ACK
-2025-04-15T20:21:13.940705012Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|569|PSH,ACK
-2025-04-15T20:21:13.950270313Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|52|ACK
-2025-04-15T20:21:13.951504127Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|2948|PSH,ACK
+timestamp|session_uid|process_uid|network_uid|community_id|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags
+2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60|SYN
+2025-04-15T20:21:13.938474097Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|60|SYN,ACK
+2025-04-15T20:21:13.938510735Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|52|ACK
+2025-04-15T20:21:13.940705012Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|569|PSH,ACK
+2025-04-15T20:21:13.950270313Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|52|ACK
+2025-04-15T20:21:13.951504127Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|TCP|23.202.93.28|443|172.31.44.65|37176|<|2948|PSH,ACK
 ```
 
 #### DNS Events (dns.log)
 ```
 # Full DNS query/response chain with CNAME resolution
-timestamp|session_uid|process_uid|network_uid|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl
-2025-04-15T20:21:13.917469825Z|9cf3844b|7df935f6|e7f9889571112233|86f112ea|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|A|0x08a0|172.31.44.65|54732|172.31.0.2|53|-|-
-2025-04-15T20:21:13.9174856Z|9cf3844b|7df935f6|e7f9889571112233|c3bc8fe2|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|AAAA|0xf59c|172.31.44.65|54732|172.31.0.2|53|-|-
-2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com|CNAME|0x08a0|172.31.0.2|53|172.31.44.65|54732|www-apple-com.v.aaplimg.com|142
-2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|www-apple-com.v.aaplimg.com|CNAME|0x08a0|172.31.0.2|53|172.31.44.65|54732|www.apple.com.edgekey.net|142
-2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com.edgekey.net|CNAME|0x08a0|172.31.0.2|53|172.31.44.65|54732|e6858.dsce9.akamaiedge.net|142
-2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|e6858.dsce9.akamaiedge.net|A|0x08a0|172.31.0.2|53|172.31.44.65|54732|23.202.93.28|5
-2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com|CNAME|0xf59c|172.31.0.2|53|172.31.44.65|54732|www-apple-com.v.aaplimg.com|142
-2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|www-apple-com.v.aaplimg.com|CNAME|0xf59c|172.31.0.2|53|172.31.44.65|54732|www.apple.com.edgekey.net|142
-2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com.edgekey.net|CNAME|0xf59c|172.31.0.2|53|172.31.44.65|54732|e6858.dsce9.akamaiedge.net|142
-2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|e6858.dsce9.akamaiedge.net|AAAA|0xf59c|172.31.0.2|53|172.31.44.65|54732|2600:1407:3c00:1aa0::1aca|20
-2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|e6858.dsce9.akamaiedge.net|AAAA|0xf59c|172.31.0.2|53|172.31.44.65|54732|2600:1407:3c00:1aa1::1aca|20
+timestamp|session_uid|process_uid|network_uid|community_id|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl
+2025-04-15T20:21:13.917469825Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|86f112ea|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|A|0x08a0|172.31.44.65|54732|172.31.0.2|53|-|-
+2025-04-15T20:21:13.9174856Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|c3bc8fe2|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|AAAA|0xf59c|172.31.44.65|54732|172.31.0.2|53|-|-
+2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com|CNAME|0x08a0|172.31.0.2|53|172.31.44.65|54732|www-apple-com.v.aaplimg.com|142
+2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|www-apple-com.v.aaplimg.com|CNAME|0x08a0|172.31.0.2|53|172.31.44.65|54732|www.apple.com.edgekey.net|142
+2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com.edgekey.net|CNAME|0x08a0|172.31.0.2|53|172.31.44.65|54732|e6858.dsce9.akamaiedge.net|142
+2025-04-15T20:21:13.918948405Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|86f112ea|324614|curl|311463|bash|RESPONSE|0x8180|e6858.dsce9.akamaiedge.net|A|0x08a0|172.31.0.2|53|172.31.44.65|54732|23.202.93.28|5
+2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com|CNAME|0xf59c|172.31.0.2|53|172.31.44.65|54732|www-apple-com.v.aaplimg.com|142
+2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|www-apple-com.v.aaplimg.com|CNAME|0xf59c|172.31.0.2|53|172.31.44.65|54732|www.apple.com.edgekey.net|142
+2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|www.apple.com.edgekey.net|CNAME|0xf59c|172.31.0.2|53|172.31.44.65|54732|e6858.dsce9.akamaiedge.net|142
+2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|e6858.dsce9.akamaiedge.net|AAAA|0xf59c|172.31.0.2|53|172.31.44.65|54732|2600:1407:3c00:1aa0::1aca|20
+2025-04-15T20:21:13.92822166Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|c3bc8fe2|324614|curl|311463|bash|RESPONSE|0x8180|e6858.dsce9.akamaiedge.net|AAAA|0xf59c|172.31.0.2|53|172.31.44.65|54732|2600:1407:3c00:1aa1::1aca|20
 ```
 
 #### TLS Events (tls.log)
 ```
 # TLS handshake details including cipher suites, supported groups, and JA4 fingerprint
-timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash
-2025-04-15T20:21:13.940716292Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|172.31.44.65|37176|23.202.93.28|443|TLS 1.0|www.apple.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xcca9,0xcca8,0xc0ad,0xc02b|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dapplez508ahttp2c1302|aeb3f012e851713acbf3b08b0cee2eba
+timestamp|session_uid|process_uid|network_uid|community_id|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash
+2025-04-15T20:21:13.940716292Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|172.31.44.65|37176|23.202.93.28|443|TLS 1.0|www.apple.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xcca9,0xcca8,0xc0ad,0xc02b|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dapplez508ahttp2c1302|aeb3f012e851713acbf3b08b0cee2eba
 ```
 
 #### Sigma Events (sigma.log)
 ```
 # Behavior matching against Sigma rules with immediate alerts
-timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_score|rule_description|match_details|mitre_tactics|mitre_techniques|process_uid|process_name|process_path|process_cmdline|process_hash|process_start_time|pid|username|working_dir|parent_process_uid|parent_name|parent_path|parent_cmdline|parent_hash|parent_start_time|ppid|network_uid|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc|container_id|rule_references|tags
-2025-04-15T20:24:39.214844757Z|bbd246fc|process_creation|e2072cab-8c9a-459b-b63c-40ae79e27031|Decode Base64 Encoded Text|low|30|Detects usage of base64 utility to decode arbitrary base64-encoded text|'Image' endswith '/base64' WITH 'CommandLine' contains '-d'|Defense-Evasion|T1027|bb020aea|base64|/usr/bin/base64|base64 -d|d7523068e26db58aa6f29839e91b86eb|2025-04-15T20:24:39.214844757Z|324779|ec2-user|/home/ec2-user/bpfview/logs|90ed22d6|bash|/usr/bin/bash|-bash|abb8abb399698492682001a40813ebb5|2025-04-15T15:12:52.770964662Z|311463|-|-|-|-|-|-|-|-|-|-|https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1027/T1027.md|
+timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_score|rule_description|match_details|mitre_tactics|mitre_techniques|process_uid|process_name|process_path|process_cmdline|process_hash|process_start_time|pid|username|working_dir|parent_process_uid|parent_name|parent_path|parent_cmdline|parent_hash|parent_start_time|ppid|network_uid|community_id|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc|container_id|rule_references|tags
+2025-04-15T20:24:39.214844757Z|bbd246fc|process_creation|e2072cab-8c9a-459b-b63c-40ae79e27031|Decode Base64 Encoded Text|low|30|Detects usage of base64 utility to decode arbitrary base64-encoded text|'Image' endswith '/base64' WITH 'CommandLine' contains '-d'|Defense-Evasion|T1027|bb020aea|base64|/usr/bin/base64|base64 -d|d7523068e26db58aa6f29839e91b86eb|2025-04-15T20:24:39.214844757Z|324779|ec2-user|/home/ec2-user/bpfview/logs|90ed22d6|bash|/usr/bin/bash|-bash|abb8abb399698492682001a40813ebb5|2025-04-15T15:12:52.770964662Z|311463|-|-|-|-|-|-|-|-|-|-|-|https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1027/T1027.md|
 ```
 
 ### Analysis Examples
@@ -715,8 +722,8 @@ timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_sco
 ```bash
 # Find DNS requests for apple.com
 $ grep apple.com dns.log | grep QUERY
-2025-04-15T20:21:13.917469825Z|9cf3844b|7df935f6|e7f9889571112233|86f112ea|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|A|0x08a0|172.31.44.65|54732|172.31.0.2|53|-|-
-2025-04-15T20:21:13.9174856Z|9cf3844b|7df935f6|e7f9889571112233|c3bc8fe2|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|AAAA|0xf59c|172.31.44.65|54732|172.31.0.2|53|-|-
+2025-04-15T20:21:13.917469825Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|86f112ea|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|A|0x08a0|172.31.44.65|54732|172.31.0.2|53|-|-
+2025-04-15T20:21:13.9174856Z|9cf3844b|7df935f6|e7f9889571112233|1:LQU9qZlK+B5F3KDmev6m5PMibrg=|c3bc8fe2|324614|curl|311463|bash|QUERY|0x0100|www.apple.com|AAAA|0xf59c|172.31.44.65|54732|172.31.0.2|53|-|-
 
 # Find the process that initiated those DNS requests
 $ grep 7df935f6 process.log 
@@ -727,11 +734,11 @@ $ grep 7df935f6 process.log
 ```bash
 # Find a TLS connection
 $ grep apple.com tls.log 
-2025-04-15T20:21:13.940716292Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|172.31.44.65|37176|23.202.93.28|443|TLS 1.0|www.apple.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xcca9,0xcca8,0xc0ad,0xc02b|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dapplez508ahttp2c1302|aeb3f012e851713acbf3b08b0cee2eba
+2025-04-15T20:21:13.940716292Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|172.31.44.65|37176|23.202.93.28|443|TLS 1.0|www.apple.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xcca9,0xcca8,0xc0ad,0xc02b|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dapplez508ahttp2c1302|aeb3f012e851713acbf3b08b0cee2eba
 
 # Find corresponding network traffic
 $ grep fdaa795fe689e39d network.log  | head -1
-2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60|SYN
+2025-04-15T20:21:13.928921649Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|TCP|172.31.44.65|37176|23.202.93.28|443|>|60|SYN
 ```
 
 ### Sigma Detection Events
@@ -750,8 +757,8 @@ Detection events are logged in all supported formats:
 
 #### Text Format (sigma.log)
 ```
-timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_score|rule_description|match_details|mitre_tactics|mitre_techniques|process_uid|process_name|process_path|process_cmdline|process_hash|process_start_time|pid|username|working_dir|parent_process_uid|parent_name|parent_path|parent_cmdline|parent_hash|parent_start_time|ppid|network_uid|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc|container_id|rule_references|tags
-2025-04-15T20:24:39.214844757Z|bbd246fc|process_creation|e2072cab-8c9a-459b-b63c-40ae79e27031|Decode Base64 Encoded Text|low|30|Detects usage of base64 utility to decode arbitrary base64-encoded text|'Image' endswith '/base64' WITH 'CommandLine' contains '-d'|Defense-Evasion|T1027|bb020aea|base64|/usr/bin/base64|base64 -d|d7523068e26db58aa6f29839e91b86eb|2025-04-15T20:24:39.214844757Z|324779|ec2-user|/home/ec2-user/bpfview/logs|90ed22d6|bash|/usr/bin/bash|-bash|abb8abb399698492682001a40813ebb5|2025-04-15T15:12:52.770964662Z|311463|-|-|-|-|-|-|-|-|-|-|https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1027/T1027.md|
+timestamp|session_uid|detection_source|rule_id|rule_name|rule_level|severity_score|rule_description|match_details|mitre_tactics|mitre_techniques|process_uid|process_name|process_path|process_cmdline|process_hash|process_start_time|pid|username|working_dir|parent_process_uid|parent_name|parent_path|parent_cmdline|parent_hash|parent_start_time|ppid|network_uid|community_id|dns_conversation_uid|src_ip|src_port|dst_ip|dst_port|protocol|direction|direction_desc|container_id|rule_references|tags
+2025-04-15T20:24:39.214844757Z|bbd246fc|process_creation|e2072cab-8c9a-459b-b63c-40ae79e27031|Decode Base64 Encoded Text|low|30|Detects usage of base64 utility to decode arbitrary base64-encoded text|'Image' endswith '/base64' WITH 'CommandLine' contains '-d'|Defense-Evasion|T1027|bb020aea|base64|/usr/bin/base64|base64 -d|d7523068e26db58aa6f29839e91b86eb|2025-04-15T20:24:39.214844757Z|324779|ec2-user|/home/ec2-user/bpfview/logs|90ed22d6|bash|/usr/bin/bash|-bash|abb8abb399698492682001a40813ebb5|2025-04-15T15:12:52.770964662Z|311463|-|-|-|-|-|-|-|-|-|-|-|https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1027/T1027.md|
 ```
 
 #### JSON Format
@@ -938,6 +945,7 @@ Example JSON output:
   "event_type": "network_flow",
   "process_uid": "ed38b9e4",
   "network_uid": "ab817774e6d607fe",
+  "community_id": "1:P3qmhAtpONF0G0I7XDN83xd0Kzc="
   "process": {
     "pid": 1617,
     "comm": "chronyd",
@@ -1041,6 +1049,7 @@ Example GELF output:
   "_session_uid": "e51b81c7",
   "_process_uid": "ada0a9ce",
   "_network_uid": "8bb7fc23e8207b5c",
+  "_community_id": "1:hGwz8hjWadgTBmaMGu7CG+d/TXw=",
   "_process_id": 325489,
   "_process_name": "wget",
   "_parent_id": 311463,
@@ -1159,6 +1168,7 @@ The metrics endpoint is automatically enabled when BPFView starts, with no addit
 | Feature | BPFView | tcpdump | Wireshark | bcc/BPF Tools |
 |---------|---------|---------|-----------|---------------|
 | Process Attribution | ✅ | ❌ | ❌ | ⚠️ (complex) |
+| Community ID Flow Hashing | ✅ | ❌ | ✅ | ❌ |
 | Binary Hash Tracking | ✅ | ❌ | ❌ | ❌ |
 | Container Detection | ✅ | ❌ | ❌ | ⚠️ |
 | Environment Capture | ✅ | ❌ | ❌ | ❌ |
