@@ -34,30 +34,11 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 
 	"github.com/jnesss/bpfview/outputformats"
 	"github.com/jnesss/bpfview/types"
-)
-
-var (
-	eventCounter = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "bpfview_events_total",
-			Help: "Total number of events processed by type",
-		},
-		[]string{"event_type"},
-	)
-
-	eventProcessingErrors = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "bpfview_processing_errors_total",
-			Help: "Total number of event processing errors by type",
-		},
-		[]string{"event_type"},
-	)
 )
 
 type bpfObjects struct {
@@ -283,6 +264,11 @@ func main() {
 			log.Println("Initializing process cache...")
 			initializeProcessCache()
 			log.Println("Process cache initialized")
+
+			// Initialize and start metrics collection
+			metricsCollector := NewMetricsCollector(processCache)
+			metricsCollector.Start()
+			defer metricsCollector.Stop()
 
 			if config.sigmaRulesDir != "" {
 				var err error
@@ -674,7 +660,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			}).Inc()
 			return fmt.Errorf("error parsing network event: %w", err)
 		}
-		handleNetworkEvent(&event)
+		go func(event types.NetworkEvent) {
+			handleNetworkEvent(&event)
+		}(event)
 
 	case types.EVENT_DNS:
 		var event types.BPFDNSRawEvent
@@ -684,7 +672,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			}).Inc()
 			return fmt.Errorf("error parsing DNS event: %w", err)
 		}
-		handleDNSEvent(&event)
+		go func(event types.BPFDNSRawEvent) {
+			handleDNSEvent(&event)
+		}(event)
 
 	case types.EVENT_TLS:
 		var event types.BPFTLSEvent
@@ -694,7 +684,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			}).Inc()
 			return fmt.Errorf("error parsing TLS event: %w", err)
 		}
-		handleTLSEvent(&event)
+		go func(event types.BPFTLSEvent) {
+			handleTLSEvent(&event)
+		}(event)
 
 	case types.EVENT_RESPONSE:
 		var event struct {
