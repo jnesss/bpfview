@@ -66,18 +66,26 @@ func getQuicPacketType(firstByte byte) uint8 {
 }
 
 func handleTLSEvent(event *types.BPFTLSEvent) {
+	timers := NewTimerPair("tls")
+	defer timers.ObserveDuration()
+
 	// Wait for process info
 	var processInfo *types.ProcessInfo
 	var exists bool
 
 	// Try up to 10 times with 5ms delay (50ms total max)
 	for i := 0; i < 10; i++ {
+		timers.IncrementAttempts()
+
 		processInfo, exists = GetProcessFromCache(event.Pid)
 		if exists {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+
+	// Signal processing start after cache attempts
+	timers.StartProcessing(exists)
 
 	if !exists {
 		// Use minimal info if we still can't find process
@@ -869,4 +877,3 @@ func extractKeyShareGroups(data []byte) []uint16 {
 	}
 	return groups
 }
-
