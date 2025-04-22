@@ -153,15 +153,15 @@ func (f *TextFormatter) writeProcessHeader() {
 }
 
 func (f *TextFormatter) writeNetworkHeader() {
-	fmt.Fprintln(f.networkLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags")
+	fmt.Fprintln(f.networkLog, "timestamp|session_uid|process_uid|network_uid|community_id|pid|comm|ppid|parent_comm|protocol|src_ip|src_port|dst_ip|dst_port|direction|bytes|tcp_flags")
 }
 
 func (f *TextFormatter) writeDNSHeader() {
-	fmt.Fprintln(f.dnsLog, "timestamp|session_uid|process_uid|network_uid|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl")
+	fmt.Fprintln(f.dnsLog, "timestamp|session_uid|process_uid|network_uid|community_id|dns_conversation_uid|pid|comm|ppid|parent_comm|event_type|dns_flags|query|type|txid|src_ip|src_port|dst_ip|dst_port|answers|ttl")
 }
 
 func (f *TextFormatter) writeTLSHeader() {
-	fmt.Fprintln(f.tlsLog, "timestamp|session_uid|process_uid|network_uid|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash")
+	fmt.Fprintln(f.tlsLog, "timestamp|session_uid|process_uid|network_uid|community_id|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash")
 }
 
 func (f *TextFormatter) writeEnvHeader() {
@@ -207,6 +207,7 @@ func (f *TextFormatter) writeSigmaHeader() {
 
 		// Network fields (for network/DNS detections)
 		"network_uid",
+		"community_id",
 		"dns_conversation_uid",
 		"src_ip",
 		"src_port",
@@ -312,6 +313,14 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		uint32ToNetIP(event.DstIP),
 		event.SrcPort, event.DstPort)
 
+	communityID := GenerateCommunityID(
+		uint32ToNetIP(event.SrcIP),
+		uint32ToNetIP(event.DstIP),
+		event.SrcPort,
+		event.DstPort,
+		event.Protocol,
+		0) // default seed
+
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
@@ -328,11 +337,12 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		tcpFlags = FormatTCPFlags(event.TCPFlags)
 	}
 
-	_, err := fmt.Fprintf(f.networkLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d|%s\n",
+	_, err := fmt.Fprintf(f.networkLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|%s|%d|%s|%d|%s|%d|%s\n",
 		timestamp.Format(time.RFC3339Nano),
 		f.sessionUID,
 		processUID,
 		uid,
+		communityID,
 		event.Pid,
 		comm,
 		event.Ppid,
@@ -344,8 +354,7 @@ func (f *TextFormatter) FormatNetwork(event *types.NetworkEvent, info *types.Pro
 		event.DstPort,
 		direction,
 		event.BytesCount,
-		tcpFlags,
-	)
+		tcpFlags)
 
 	return err
 }
@@ -356,6 +365,13 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
 	network_uid := GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	communityID := GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		17, // UDP
+		0)  // default seed
 
 	eventType := "QUERY"
 	if event.IsResponse {
@@ -367,11 +383,12 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 	if !event.IsResponse {
 		// For queries, log the questions
 		for _, q := range event.Questions {
-			_, err := fmt.Fprintf(f.dnsLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|-|-\n",
+			_, err := fmt.Fprintf(f.dnsLog, "%s|%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|-|-\n",
 				timestamp.Format(time.RFC3339Nano),
 				f.sessionUID,
 				processUID,
 				network_uid,
+				communityID,
 				event.ConversationID,
 				event.Pid,
 				event.Comm,
@@ -395,11 +412,12 @@ func (f *TextFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.Pr
 		// For responses, log only the answers
 		for _, a := range event.Answers {
 			answer := formatDNSAnswer(&a)
-			_, err := fmt.Fprintf(f.dnsLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|%s|%d\n",
+			_, err := fmt.Fprintf(f.dnsLog, "%s|%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|0x%04x|%s|%s|0x%04x|%s|%d|%s|%d|%s|%d\n",
 				timestamp.Format(time.RFC3339Nano),
 				f.sessionUID,
 				processUID,
 				network_uid,
+				communityID,
 				event.ConversationID,
 				event.Pid,
 				event.Comm,
@@ -432,6 +450,13 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 
 	timestamp := BpfTimestampToTime(event.Timestamp)
 	network_uid := GenerateBidirectionalConnID(event.Pid, event.Ppid, event.SourceIP, event.DestIP, event.SourcePort, event.DestPort)
+	communityID := GenerateCommunityID(
+		event.SourceIP,
+		event.DestIP,
+		event.SourcePort,
+		event.DestPort,
+		event.Protocol,
+		0) // default seed
 	processUID := info.ProcessUID
 
 	// Format cipher suites
@@ -453,6 +478,7 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 		f.sessionUID,
 		processUID,
 		network_uid,
+		communityID,
 		event.Pid,
 		event.Comm,
 		event.Ppid,
@@ -589,6 +615,7 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 	// Network fields with defaults
 	networkUID := "-"
+	communityID := "-"
 	dnsConvUID := "-"
 	srcIP := "-"
 	srcPort := "-"
@@ -600,6 +627,7 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 	if match.DetectionSource == "network_connection" || match.DetectionSource == "dns_query" {
 		networkUID = match.NetworkUID
+		communityID = match.CommunityID
 
 		if src, ok := match.EventData["SourceIp"].(string); ok {
 			srcIP = src
@@ -676,6 +704,7 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 		ppid,
 
 		networkUID,
+		communityID,
 		dnsConvUID,
 		srcIP,
 		srcPort,
