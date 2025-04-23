@@ -164,6 +164,7 @@ func (mc *MetricsCollector) updateMetrics() {
 	cacheStats.WithLabelValues("keys_added").Set(float64(metrics.KeysAdded()))
 	cacheStats.WithLabelValues("cost_added").Set(float64(metrics.CostAdded()))
 	cacheStats.WithLabelValues("cost_evicted").Set(float64(metrics.CostEvicted()))
+	cacheStats.WithLabelValues("max_size").Set(float64(mc.cache.MaxSize()))
 
 	// Update resource usage
 	stats := runtime.MemStats{}
