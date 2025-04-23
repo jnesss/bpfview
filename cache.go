@@ -8,40 +8,43 @@ import (
 
 // ProcessCache wraps Ristretto cache for process information
 type ProcessCache struct {
-	cache *ristretto.Cache
+	cache   *ristretto.Cache
+	maxSize int64
 }
 
 // NewProcessCache creates a new Ristretto-backed process cache
 func NewProcessCache(maxSize int64) (*ProcessCache, error) {
-	cache, err := ristretto.NewCache(&ristretto.Config{
-		// Ristretto recommends NumCounters to be 10x MaxCost
+	cfg := &ristretto.Config{
 		NumCounters: maxSize * 10,
 		MaxCost:     maxSize,
 		BufferItems: 64,
-		// Cost function estimates memory usage of ProcessInfo
+		Metrics:     true,
 		Cost: func(value interface{}) int64 {
 			if pi, ok := value.(*types.ProcessInfo); ok {
-				// Base struct size plus variable-length fields
-				size := int64(24) // Base struct overhead
+				size := int64(24)
 				size += int64(len(pi.Comm) + len(pi.ParentComm) +
 					len(pi.ExePath) + len(pi.CmdLine) +
 					len(pi.WorkingDir) + len(pi.Username) +
 					len(pi.ContainerID) + len(pi.ProcessUID))
 
-				// Add environment variables size
 				for _, env := range pi.Environment {
 					size += int64(len(env))
 				}
 				return size
 			}
-			return 1 // Default cost for unknown types
+			return 1
 		},
-	})
+	}
+
+	cache, err := ristretto.NewCache(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	return &ProcessCache{cache: cache}, nil
+	return &ProcessCache{
+		cache:   cache,
+		maxSize: maxSize,
+	}, nil
 }
 
 // Get retrieves a process from the cache
@@ -66,6 +69,11 @@ func (pc *ProcessCache) Delete(pid uint32) {
 // Clear removes all processes from the cache
 func (pc *ProcessCache) Clear() {
 	pc.cache.Clear()
+}
+
+// MaxSize returns the configured maximum cache size
+func (pc *ProcessCache) MaxSize() int64 {
+	return pc.maxSize
 }
 
 // GetMetrics returns current cache metrics

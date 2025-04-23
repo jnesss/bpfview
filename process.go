@@ -105,7 +105,6 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	}
 
 	timer := NewEventTimer("process_exit")
-	defer timer.ObserveDuration()
 
 	// Record event count
 	eventCounter.WithLabelValues("process").Inc()
@@ -115,12 +114,14 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	if !exists {
 		// Process not in cache, nothing to update
 		//  (we could try to update based on comm + PID but we wouldn't have UID..)
+		timer.ObserveDuration()
 		return
 	}
 
 	// Only update if we haven't recorded an exit time yet
 	if !info.ExitTime.IsZero() {
 		// Already has exit time, skip
+		timer.ObserveDuration()
 		return
 	}
 
@@ -141,6 +142,7 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
 		excludedEventsTotal.WithLabelValues("process_exit").Inc()
+		timer.ObserveDuration()
 		return
 	}
 
