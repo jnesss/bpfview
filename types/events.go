@@ -45,6 +45,14 @@ const (
 	RESPONSE_ACTION_TASK_BLOCKED    = 3 // matches emit_event(pid, 3, flags)
 )
 
+type ProcessInfoLevel int
+
+const (
+	ProcessLevelMinimal ProcessInfoLevel = iota
+	ProcessLevelBasic
+	ProcessLevelFull
+)
+
 // CRITICAL: The following struct layouts must exactly match BPF programs.
 // Any changes require coordinated updates to the corresponding BPF code.
 
