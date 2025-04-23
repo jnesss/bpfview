@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/jnesss/bpfview/types"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Process cache to maintain state
@@ -283,7 +285,13 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	}
 
 	// Complete process info and cache the new process
-	CompleteProcessInfo(info)
+	//  Using types.ProcessLevel Minimal here because:
+	//  1. All basic info comes from the kernel event
+	//  2. Everything else is inherited from parent if available
+	//  3. We don't need to read /proc because either:
+	//     Parent info exists and we inherit
+	//     Parent info doesn't exist and retrying won't help
+	CompleteProcessInfo(info, types.ProcessLevelMinimal)
 	success := AddOrUpdateProcessCache(event.Pid, info)
 	if !success {
 		globalLogger.Debug("process", "Failed to cache new process PID %d", event.Pid)
@@ -435,7 +443,7 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	MergeProcessInfo(info, secondProcInfo, "second")
 
 	// Apply standard enrichment and finalization
-	CompleteProcessInfo(info)
+	CompleteProcessInfo(info, types.ProcessLevelFull)
 
 	// Add to process cache
 	AddOrUpdateProcessCache(event.Pid, info)
@@ -729,7 +737,7 @@ func findAndCacheParentProcess(ppid uint32) *types.ProcessInfo {
 			ParentComm: "swapper/0",
 			EventType:  "exec",
 		}
-		CompleteProcessInfo(info)
+		CompleteProcessInfo(info, types.ProcessLevelMinimal) // PID 2 special case is handled in CompleteProcessInfo
 		AddOrUpdateProcessCache(2, info)
 		return info
 	}
@@ -750,7 +758,7 @@ func findAndCacheParentProcess(ppid uint32) *types.ProcessInfo {
 		}
 
 		// Apply standard enrichment and finalization
-		CompleteProcessInfo(info)
+		CompleteProcessInfo(info, types.ProcessLevelBasic) // Get exe path and cmdline for parent matching
 		success := AddOrUpdateProcessCache(ppid, info)
 		if !success {
 			globalLogger.Debug("cache", "Failed to add PID %d to cache", ppid)
@@ -836,75 +844,6 @@ func CollectProcMetadata(pid uint32) *types.ProcessInfo {
 	return info
 }
 
-// Enrich a process with additional metadata (username, container, etc.)
-func EnrichProcessInfo(info *types.ProcessInfo) {
-	// Skip enrichment for special kernel processes
-	if info.PID == 2 {
-		info.Comm = "kthreadd"
-		info.ExePath = "[kernel]"
-		info.WorkingDir = "/"
-		info.Username = "root"
-		info.UID = 0
-		info.GID = 0
-		info.PPID = 0
-		info.ParentComm = "swapper/0"
-		info.StartTime = BootTime
-		return
-	}
-
-	// Set username from UID
-	if info.Username == "" && info.UID > 0 {
-		info.Username = GetUsernameFromUID(info.UID)
-	}
-
-	// Set command name if not already set
-	if info.Comm == "" && info.ExePath != "" {
-		info.Comm = filepath.Base(info.ExePath)
-	}
-
-	// Get environment variables if not already set
-	if len(info.Environment) == 0 {
-		if env, err := getProcessEnvironment(info.PID); err == nil {
-			info.Environment = env
-		}
-	}
-
-	// Get container ID if not already set
-	if info.ContainerID == "" {
-		procDir := fmt.Sprintf("/proc/%d", info.PID)
-		procReadsTotal.Inc()
-		if cgroupData, err := os.ReadFile(fmt.Sprintf("%s/cgroup", procDir)); err == nil {
-			lines := strings.Split(string(cgroupData), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "docker") || strings.Contains(line, "containerd") {
-					parts := strings.Split(line, "/")
-					for i := len(parts) - 1; i >= 0; i-- {
-						part := parts[i]
-						if containerIDRegex.MatchString(part) {
-							info.ContainerID = part
-							break
-						}
-					}
-					if info.ContainerID != "" {
-						break
-					}
-				}
-			}
-		}
-	}
-
-	// Get parent command if not already set
-	if info.ParentComm == "" && info.PPID > 0 {
-		procReadsTotal.Inc()
-		parentProcDir := fmt.Sprintf("/proc/%d", info.PPID)
-		if _, err := os.Stat(parentProcDir); err == nil {
-			if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", parentProcDir)); err == nil {
-				info.ParentComm = strings.TrimSpace(string(commBytes))
-			}
-		}
-	}
-}
-
 // Finalize a process with UIDs and hashes
 func FinalizeProcessInfo(info *types.ProcessInfo) {
 	// Calculate hash if enabled and not already set
@@ -941,8 +880,125 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 }
 
 // The main function that takes a process through all stages
-func CompleteProcessInfo(info *types.ProcessInfo) *types.ProcessInfo {
-	EnrichProcessInfo(info)
+func CompleteProcessInfo(info *types.ProcessInfo, level types.ProcessInfoLevel) *types.ProcessInfo {
+	levelName := map[types.ProcessInfoLevel]string{
+		types.ProcessLevelMinimal: "minimal",
+		types.ProcessLevelBasic:   "basic",
+		types.ProcessLevelFull:    "full",
+	}[level]
+
+	timer := prometheus.NewTimer(processInfoDurations.WithLabelValues(levelName))
+	defer timer.ObserveDuration()
+
+	// Special case handling for PID 2 (from EnrichProcessInfo)
+	if info.PID == 2 {
+		info.Comm = "kthreadd"
+		info.ExePath = "[kernel]"
+		info.WorkingDir = "/"
+		info.Username = "root"
+		info.UID = 0
+		info.GID = 0
+		info.PPID = 0
+		info.ParentComm = "swapper/0"
+		info.StartTime = BootTime
+		FinalizeProcessInfo(info)
+		return info
+	}
+
+	// Minimal level - always do these since they're cheap
+	if info.Username == "" && info.UID > 0 {
+		info.Username = GetUsernameFromUID(info.UID)
+		processInfoLevelStats.WithLabelValues("minimal", "success").Inc()
+	}
+	if info.Comm == "" && info.ExePath != "" {
+		info.Comm = filepath.Base(info.ExePath)
+	}
+
+	if level == types.ProcessLevelMinimal {
+		FinalizeProcessInfo(info)
+		return info
+	}
+
+	// Basic level adds executable info
+	if info.ExePath == "" {
+		processInfoProcReads.WithLabelValues("basic", "exe").Inc()
+		if exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", info.PID)); err == nil {
+			info.ExePath = exePath
+			processInfoLevelStats.WithLabelValues("basic", "success").Inc()
+		} else {
+			processInfoLevelStats.WithLabelValues("basic", "failure").Inc()
+		}
+	}
+
+	if info.CmdLine == "" {
+		processInfoProcReads.WithLabelValues("basic", "cmdline").Inc()
+		if cmdline, err := readProcFile(info.PID, "cmdline"); err == nil {
+			info.CmdLine = cmdline
+			processInfoLevelStats.WithLabelValues("basic", "success").Inc()
+		} else {
+			processInfoLevelStats.WithLabelValues("basic", "failure").Inc()
+		}
+	}
+
+	if level == types.ProcessLevelBasic {
+		FinalizeProcessInfo(info)
+		return info
+	}
+
+	// Full level - include everything
+	processInfoLevelStats.WithLabelValues("full", "start").Inc()
+
+	// Environment variables
+	if len(info.Environment) == 0 {
+		processInfoProcReads.WithLabelValues("full", "environ").Inc()
+		if env, err := getProcessEnvironment(info.PID); err == nil {
+			info.Environment = env
+		}
+	}
+
+	// Container ID detection
+	if info.ContainerID == "" {
+		processInfoProcReads.WithLabelValues("full", "cgroup").Inc()
+		if cgroupData, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", info.PID)); err == nil {
+			lines := strings.Split(string(cgroupData), "\n")
+			for _, line := range lines {
+				if strings.Contains(line, "docker") || strings.Contains(line, "containerd") {
+					parts := strings.Split(line, "/")
+					for i := len(parts) - 1; i >= 0; i-- {
+						part := parts[i]
+						if containerIDRegex.MatchString(part) {
+							info.ContainerID = part
+							break
+						}
+					}
+					if info.ContainerID != "" {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Working directory
+	if info.WorkingDir == "" {
+		processInfoProcReads.WithLabelValues("full", "cwd").Inc()
+		if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", info.PID)); err == nil {
+			info.WorkingDir = cwd
+		}
+	}
+
+	// Parent process info
+	if info.ParentComm == "" && info.PPID > 0 {
+		procReadsTotal.Inc()
+		parentProcDir := fmt.Sprintf("/proc/%d", info.PPID)
+		if _, err := os.Stat(parentProcDir); err == nil {
+			if commBytes, err := os.ReadFile(fmt.Sprintf("%s/comm", parentProcDir)); err == nil {
+				info.ParentComm = strings.TrimSpace(string(commBytes))
+			}
+		}
+	}
+
+	processInfoLevelStats.WithLabelValues("full", "complete").Inc()
 	FinalizeProcessInfo(info)
 	return info
 }
@@ -1050,7 +1106,7 @@ func initializeProcessCache() {
 				PID:       2,
 				EventType: "exec",
 			}
-			CompleteProcessInfo(info) // This will handle the special case
+			CompleteProcessInfo(info, types.ProcessLevelFull) // This will handle the special case
 			AddOrUpdateProcessCache(2, info)
 			cachedCount++
 			continue
@@ -1062,7 +1118,7 @@ func initializeProcessCache() {
 			info.EventType = "exec"
 
 			// Apply standard enrichment and finalization
-			CompleteProcessInfo(info)
+			CompleteProcessInfo(info, types.ProcessLevelFull)
 			AddOrUpdateProcessCache(uint32(pid), info)
 			cachedCount++
 		}
