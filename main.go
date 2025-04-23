@@ -34,30 +34,11 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 
 	"github.com/jnesss/bpfview/outputformats"
 	"github.com/jnesss/bpfview/types"
-)
-
-var (
-	eventCounter = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "bpfview_events_total",
-			Help: "Total number of events processed by type",
-		},
-		[]string{"event_type"},
-	)
-
-	eventProcessingErrors = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "bpfview_processing_errors_total",
-			Help: "Total number of event processing errors by type",
-		},
-		[]string{"event_type"},
-	)
 )
 
 type bpfObjects struct {
@@ -86,16 +67,17 @@ var BootTime time.Time
 
 func main() {
 	var config struct {
-		logLevel       string
-		showTimestamp  bool
-		filterConfig   FilterConfig
-		HashBinaries   bool
-		format         string
-		addHostname    bool
-		addIP          bool
-		sigmaRulesDir  string
-		sigmaQueueSize int
-		dbPath         string
+		logLevel         string
+		showTimestamp    bool
+		filterConfig     FilterConfig
+		HashBinaries     bool
+		format           string
+		addHostname      bool
+		addIP            bool
+		sigmaRulesDir    string
+		sigmaQueueSize   int
+		dbPath           string
+		processCacheSize int64
 	}
 
 	rootCmd := &cobra.Command{
@@ -283,6 +265,11 @@ func main() {
 			initializeProcessCache()
 			log.Println("Process cache initialized")
 
+			// Initialize and start metrics collection
+			metricsCollector := NewMetricsCollector(processCache)
+			metricsCollector.Start()
+			defer metricsCollector.Stop()
+
 			if config.sigmaRulesDir != "" {
 				var err error
 				globalSigmaEngine, err = NewSigmaEngine(config.sigmaRulesDir, config.sigmaQueueSize)
@@ -418,6 +405,10 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&config.addIP, "add-ip", false, "Include host IP address with every log entry")
 	rootCmd.PersistentFlags().StringVar(&config.dbPath, "dbfile", "./logs/bpfview.db", "SQLite database path (when using sqlite format)")
 
+	// Performance optimization options
+	rootCmd.Flags().Int64Var(&config.processCacheSize, "process-cache-size",
+		100000, "Maximum number of processes to cache")
+
 	rootCmd.SetUsageTemplate(`Usage:
   {{.CommandPath}} [flags]
 
@@ -477,7 +468,11 @@ Output Options:
   --add-ip            Add host IP address to all log entries
                        Recommended when collecting from multiple hosts
   
-  --dbfile string.    Name of database file to use when using sqlite format                      
+  --dbfile string.    Name of database file to use when using sqlite format     
+  
+Performance Optimization Options:
+  --process-cache-size int  Maximum number of processes to cache (default 100000)
+                  
 
 Examples:
   # Monitor all container activity
@@ -665,7 +660,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			}).Inc()
 			return fmt.Errorf("error parsing network event: %w", err)
 		}
-		handleNetworkEvent(&event)
+		go func(event types.NetworkEvent) {
+			handleNetworkEvent(&event)
+		}(event)
 
 	case types.EVENT_DNS:
 		var event types.BPFDNSRawEvent
@@ -675,7 +672,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			}).Inc()
 			return fmt.Errorf("error parsing DNS event: %w", err)
 		}
-		handleDNSEvent(&event)
+		go func(event types.BPFDNSRawEvent) {
+			handleDNSEvent(&event)
+		}(event)
 
 	case types.EVENT_TLS:
 		var event types.BPFTLSEvent
@@ -685,7 +684,9 @@ func handleEvent(data []byte, rc readerContext) error {
 			}).Inc()
 			return fmt.Errorf("error parsing TLS event: %w", err)
 		}
-		handleTLSEvent(&event)
+		go func(event types.BPFTLSEvent) {
+			handleTLSEvent(&event)
+		}(event)
 
 	case types.EVENT_RESPONSE:
 		var event struct {

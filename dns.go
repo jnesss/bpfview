@@ -13,6 +13,9 @@ import (
 )
 
 func handleDNSEvent(event *types.BPFDNSRawEvent) error {
+	timers := NewTimerPair("dns")
+	defer timers.ObserveDuration()
+
 	// Wait to start processing until we have processinfo
 	//  This is not my favorite design pattern
 	//  But we are reliant on the processinfo for the processUID correlation, amongst other things
@@ -22,12 +25,17 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 
 	// Try up to 10 times with 5ms delay (50ms total max)
 	for i := 0; i < 10; i++ {
+		timers.IncrementAttempts()
+
 		processInfo, exists = GetProcessFromCache(event.Pid)
 		if exists {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+
+	// Signal processing start after cache attempts
+	timers.StartProcessing(exists)
 
 	if !exists {
 		// Use minimal info if we still can't find process
