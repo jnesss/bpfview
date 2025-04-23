@@ -76,18 +76,6 @@ func (pc *ProcessCache) MaxSize() int64 {
 	return pc.maxSize
 }
 
-// GetSize returns current number of items in cache
-func (pc *ProcessCache) GetSize() uint64 {
-	if pc.cache == nil {
-		return 0
-	}
-	metrics := pc.cache.Metrics
-	if metrics == nil {
-		return 0
-	}
-	return metrics.KeysAdded() - metrics.KeysEvicted()
-}
-
 // GetMetrics returns current cache metrics
 func (pc *ProcessCache) GetMetrics() *ristretto.Metrics {
 	return pc.cache.Metrics
