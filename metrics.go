@@ -134,7 +134,7 @@ func (mc *MetricsCollector) Stop() {
 }
 
 func (mc *MetricsCollector) collect() {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
