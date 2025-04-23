@@ -189,6 +189,32 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	}
 }
 
+/*
+ProcessCache Strategy
+
+The process cache is used to maintain state about running processes, particularly parent-child
+relationships. The main challenges are:
+
+1. Race Conditions:
+   - Fork events can arrive before parent process info is fully cached
+   - Cache operations (Set) are asynchronous and need Wait() to ensure completion
+   - Multiple goroutines may try to cache the same parent process
+
+2. Process State:
+   - Process state may not be immediately available after fork
+   - Parent processes may exit while children are still running
+   - Some process info comes from BPF, some from /proc filesystem
+
+Caching Strategy:
+1. Fast Path: Try immediate cache lookup first
+2. Recovery Path: On first miss, try loading from /proc
+3. Retry Path: Use short exponential backoff for subsequent attempts
+4. Verification: Always verify cache operations complete and succeeded
+
+This strategy balances performance (most processes hit the fast path) with reliability
+(we'll eventually get the data even in edge cases).
+*/
+
 func handleProcessForkEvent(event *types.ProcessEvent) {
 	timers := NewTimerPair("process_fork")
 	defer timers.ObserveDuration()
@@ -208,41 +234,62 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 		EventType:  "fork",
 	}
 
-	// Get parent info
+	// Try to get parent info with exponential backoff
 	var parentInfo *types.ProcessInfo
 	var parentExists bool
 
-	// Try up to 10 times with 5ms delay (50ms total max)
-	for i := 0; i < 10; i++ {
+	for attempt := 0; attempt < 4; attempt++ { // Max 15ms total (1+2+4+8)
 		timers.IncrementAttempts()
-		parentInfo, parentExists = GetProcessFromCache(event.Ppid)
-		if parentExists {
+
+		// Fast Path: Try cache first
+		if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
+			parentInfo = pinfo
+			parentExists = true
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	timers.StartProcessing(parentExists)
 
-	// Record event
+		// Recovery Path: On first failure, try loading from /proc
+		if attempt == 0 {
+			if pinfo := findAndCacheParentProcess(event.Ppid); pinfo != nil {
+				// Wait for cache operation to complete
+				processCache.cache.Wait()
+
+				// Verify the cache operation succeeded
+				if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
+					parentInfo = pinfo
+					parentExists = true
+					break
+				}
+			}
+		}
+
+		// Retry Path: Exponential backoff before next attempt
+		delay := time.Duration(1<<uint(attempt)) * time.Millisecond
+		time.Sleep(delay)
+	}
+
+	// If we still failed, log diagnostic info
+	if !parentExists {
+		globalLogger.Info("process", "Failed to find parent after all attempts: "+
+			"Child PID=%d comm=%s, Parent PID=%d", event.Pid, info.Comm, event.Ppid)
+	}
+
+	timers.StartProcessing(parentExists)
 	eventCounter.WithLabelValues("process").Inc()
 
-	// If parent found, inherit its properties
+	// Inherit parent info if found
 	if parentExists {
-		InheritFromParent(info, parentInfo) // New helper
-	} else {
-		// Try to find and cache parent
-		parentInfo = findAndCacheParentProcess(event.Ppid)
-		if parentInfo != nil {
-			parentExists = true
-			InheritFromParent(info, parentInfo)
-		}
+		InheritFromParent(info, parentInfo)
 	}
 
-	// Apply standard enrichment and finalization
+	// Complete process info and cache the new process
 	CompleteProcessInfo(info)
+	success := AddOrUpdateProcessCache(event.Pid, info)
+	processCache.cache.Wait() // Ensure cache operation completes
 
-	// Add to process cache
-	AddOrUpdateProcessCache(event.Pid, info)
+	if !success {
+		globalLogger.Debug("process", "Failed to cache new process PID %d", event.Pid)
+	}
 
 	// Add to process tree if exists
 	if globalEngine != nil {
@@ -490,10 +537,13 @@ func loadExecveProgram() execveObjects {
 }
 
 // AddOrUpdateProcessCache adds or updates a process in the cache
-func AddOrUpdateProcessCache(pid uint32, info *types.ProcessInfo) {
+func AddOrUpdateProcessCache(pid uint32, info *types.ProcessInfo) bool {
 	if processCache != nil {
-		processCache.Set(pid, info)
+		success := processCache.cache.Set(pid, info, 1)
+		processCache.cache.Wait() // Ensure operation completes
+		return success
 	}
+	return false
 }
 
 // GetProcessFromCache retrieves process info from the cache
@@ -703,7 +753,10 @@ func findAndCacheParentProcess(ppid uint32) *types.ProcessInfo {
 
 		// Apply standard enrichment and finalization
 		CompleteProcessInfo(info)
-		AddOrUpdateProcessCache(ppid, info)
+		success := AddOrUpdateProcessCache(ppid, info)
+		if !success {
+			globalLogger.Debug("cache", "Failed to add PID %d to cache", ppid)
+		}
 		return info
 	}
 
