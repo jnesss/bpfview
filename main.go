@@ -268,9 +268,7 @@ func main() {
 			}
 
 			// Initialize process cache with existing processes
-			log.Println("Initializing process cache...")
 			initializeProcessCache()
-			log.Println("Process cache initialized")
 
 			// Initialize and start metrics collection
 			metricsCollector := NewMetricsCollector(processCache)
