@@ -3,14 +3,24 @@ package main
 
 import (
 	"context"
+	"runtime"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// Event processing metrics track the lifecycle of events through the system
 var (
-	// Event processing metrics
+	eventProcessingDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "bpfview_event_processing_duration_seconds",
+			Help:    "Time spent processing events after initialization and cache operations",
+			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 10),
+		},
+		[]string{"event_type"},
+	)
+
 	eventCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "bpfview_events_total",
@@ -27,20 +37,30 @@ var (
 		[]string{"event_type"},
 	)
 
-	eventProcessingDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "bpfview_event_processing_duration_seconds",
-			Help:    "Time spent processing events after cache lookup",
-			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 10), // 100μs to 10s
+	operationResults = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_operation_results",
+			Help: "Operation success and failure counts by event type and operation",
+		},
+		[]string{"event_type", "operation", "result"},
+	)
+
+	cacheMisses = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_cache_misses_total",
+			Help: "Number of cache misses by event type",
 		},
 		[]string{"event_type"},
 	)
+)
 
+// Cache performance metrics track the process cache efficiency
+var (
 	cacheLookupDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "bpfview_cache_lookup_duration_seconds",
-			Help:    "Time spent waiting for process cache entry",
-			Buckets: prometheus.ExponentialBuckets(0.000001, 2, 12), // 1μs to 10s
+			Help:    "Time spent waiting for process info cache entries including retries",
+			Buckets: prometheus.ExponentialBuckets(0.000001, 2, 12),
 		},
 		[]string{"event_type", "result"},
 	)
@@ -54,28 +74,38 @@ var (
 		[]string{"event_type", "result"},
 	)
 
-	// Cache metrics
-	cacheMetrics = promauto.NewGaugeVec(
+	cacheStats = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "bpfview_cache_metrics",
-			Help: "Process cache performance metrics",
+			Name: "bpfview_cache_stats",
+			Help: "Cache performance statistics including size, hit ratio, memory usage",
 		},
-		[]string{"metric"},
+		[]string{"type"}, // size, hit_ratio, evictions, keys_added, cost_added, cost_evicted
+	)
+)
+
+// System interaction metrics track resource usage
+var (
+	procReadsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "bpfview_proc_reads_total",
+			Help: "Total number of /proc filesystem reads",
+		},
 	)
 
-	// System interaction metrics
-	procReadsTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "bpfview_proc_reads_total",
-		Help: "Total number of /proc filesystem reads",
-	})
-
-	// Filter metrics
 	excludedEventsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "bpfview_excluded_events_total",
 			Help: "Total number of events excluded by filters",
 		},
 		[]string{"filter_type"},
+	)
+
+	resourceUsage = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "bpfview_resource_usage",
+			Help: "Current resource utilization stats",
+		},
+		[]string{"resource"}, // memory, goroutines, file_descriptors
 	)
 )
 
@@ -86,7 +116,6 @@ type MetricsCollector struct {
 	stop  context.CancelFunc
 }
 
-// NewMetricsCollector creates a new metrics collector
 func NewMetricsCollector(cache *ProcessCache) *MetricsCollector {
 	ctx, stop := context.WithCancel(context.Background())
 	return &MetricsCollector{
@@ -96,17 +125,14 @@ func NewMetricsCollector(cache *ProcessCache) *MetricsCollector {
 	}
 }
 
-// Start begins periodic metrics collection
 func (mc *MetricsCollector) Start() {
 	go mc.collect()
 }
 
-// Stop halts metrics collection
 func (mc *MetricsCollector) Stop() {
 	mc.stop()
 }
 
-// collect periodically updates metrics
 func (mc *MetricsCollector) collect() {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -116,13 +142,12 @@ func (mc *MetricsCollector) collect() {
 		case <-mc.ctx.Done():
 			return
 		case <-ticker.C:
-			mc.updateCacheMetrics()
+			mc.updateMetrics()
 		}
 	}
 }
 
-// updateCacheMetrics collects and updates cache-related metrics
-func (mc *MetricsCollector) updateCacheMetrics() {
+func (mc *MetricsCollector) updateMetrics() {
 	if mc.cache == nil {
 		return
 	}
@@ -132,32 +157,39 @@ func (mc *MetricsCollector) updateCacheMetrics() {
 		return
 	}
 
-	cacheMetrics.WithLabelValues("size").Set(float64(metrics.KeysAdded() - metrics.KeysEvicted()))
-	cacheMetrics.WithLabelValues("hits").Set(float64(metrics.Hits()))
-	cacheMetrics.WithLabelValues("misses").Set(float64(metrics.Misses()))
-	cacheMetrics.WithLabelValues("hit_ratio").Set(metrics.Ratio() * 100)
-	cacheMetrics.WithLabelValues("cost_added").Set(float64(metrics.CostAdded()))
-	cacheMetrics.WithLabelValues("evictions").Set(float64(metrics.KeysEvicted()))
+	// Update cache stats
+	cacheStats.WithLabelValues("size").Set(float64(metrics.KeysAdded() - metrics.KeysEvicted()))
+	cacheStats.WithLabelValues("hit_ratio").Set(metrics.Ratio() * 100)
+	cacheStats.WithLabelValues("evictions").Set(float64(metrics.KeysEvicted()))
+	cacheStats.WithLabelValues("keys_added").Set(float64(metrics.KeysAdded()))
+	cacheStats.WithLabelValues("cost_added").Set(float64(metrics.CostAdded()))
+	cacheStats.WithLabelValues("cost_evicted").Set(float64(metrics.CostEvicted()))
+
+	// Update resource usage
+	stats := runtime.MemStats{}
+	runtime.ReadMemStats(&stats)
+	resourceUsage.WithLabelValues("memory_bytes").Set(float64(stats.Alloc))
+	resourceUsage.WithLabelValues("goroutines").Set(float64(runtime.NumGoroutine()))
 }
 
-// Timer wraps a prometheus timer for event duration tracking
+// Timer wraps prometheus timer for event duration tracking
 type Timer struct {
 	timer *prometheus.Timer
 }
 
-// NewEventTimer creates a new timer for tracking event processing duration
 func NewEventTimer(eventType string) *Timer {
 	return &Timer{
 		timer: prometheus.NewTimer(eventProcessingDuration.WithLabelValues(eventType)),
 	}
 }
 
-// ObserveDuration records the duration since the timer was created
 func (t *Timer) ObserveDuration() {
-	t.timer.ObserveDuration()
+	if t.timer != nil {
+		t.timer.ObserveDuration()
+	}
 }
 
-// TimerPair tracks both wait and processing time
+// TimerPair tracks both wait and processing time for an event
 type TimerPair struct {
 	waitTimer    *prometheus.Timer
 	processTimer *prometheus.Timer
@@ -173,17 +205,16 @@ func NewTimerPair(eventType string) *TimerPair {
 }
 
 func (tp *TimerPair) StartProcessing(cacheHit bool) {
-	// Record wait time with appropriate result label
-	tp.waitTimer.ObserveDuration()
+	if tp.waitTimer != nil {
+		tp.waitTimer.ObserveDuration()
+	}
 	result := "hit"
 	if !cacheHit {
 		result = "miss"
+		cacheMisses.WithLabelValues(tp.eventType).Inc()
 	}
 
-	// Record number of attempts
 	cacheWaitAttempts.WithLabelValues(tp.eventType, result).Observe(float64(tp.waitAttempts))
-
-	// Start processing timer
 	tp.processTimer = prometheus.NewTimer(eventProcessingDuration.WithLabelValues(tp.eventType))
 }
 
