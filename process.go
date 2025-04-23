@@ -98,13 +98,17 @@ func handleProcessEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 }
 
 func handleProcessExitEvent(event *types.ProcessEvent) {
-	timer := NewEventTimer("process_exit")
-
 	// Check if we should ignore this exit
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	if shouldIgnoreProcessExit(comm) {
 		return
 	}
+
+	timer := NewEventTimer("process_exit")
+	defer timer.ObserveDuration()
+
+	// Record event count
+	eventCounter.WithLabelValues("process").Inc()
 
 	// Get the process from cache
 	info, exists := GetProcessFromCache(event.Pid)
@@ -136,6 +140,7 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
+		excludedEventsTotal.WithLabelValues("process_exit").Inc()
 		return
 	}
 
@@ -216,6 +221,9 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	}
 	timers.StartProcessing(parentExists)
 
+	// Record event
+	eventCounter.WithLabelValues("process").Inc()
+
 	// If parent found, inherit its properties
 	if parentExists {
 		InheritFromParent(info, parentInfo) // New helper
@@ -241,6 +249,7 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
+		excludedEventsTotal.WithLabelValues("process_fork").Inc()
 		return
 	}
 
@@ -390,8 +399,12 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
+		excludedEventsTotal.WithLabelValues("process_exec").Inc()
 		return
 	}
+
+	// Record event
+	eventCounter.WithLabelValues("process").Inc()
 
 	// Log to console with enhanced information
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
@@ -484,9 +497,18 @@ func AddOrUpdateProcessCache(pid uint32, info *types.ProcessInfo) {
 // GetProcessFromCache retrieves process info from the cache
 func GetProcessFromCache(pid uint32) (*types.ProcessInfo, bool) {
 	if processCache == nil {
+		operationResults.WithLabelValues("process", "cache_lookup", "failure").Inc()
+		cacheMisses.WithLabelValues("process").Inc()
 		return nil, false
 	}
-	return processCache.Get(pid)
+	info, exists := processCache.Get(pid)
+	if exists {
+		operationResults.WithLabelValues("process", "cache_lookup", "success").Inc()
+	} else {
+		operationResults.WithLabelValues("process", "cache_lookup", "failure").Inc()
+		cacheMisses.WithLabelValues("process").Inc()
+	}
+	return info, exists
 }
 
 // GetUsernameFromUID returns the username for a given UID
@@ -837,6 +859,9 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 		info.BinaryHash == "" && info.ExePath != "" && info.ExePath != "[kernel]" {
 		if hash, err := CalculateMD5(info.ExePath); err == nil {
 			info.BinaryHash = hash
+			operationResults.WithLabelValues("process", "hash_calc", "success").Inc()
+		} else {
+			operationResults.WithLabelValues("process", "hash_calc", "failure").Inc()
 		}
 	}
 
