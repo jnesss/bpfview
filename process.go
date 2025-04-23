@@ -285,8 +285,6 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	// Complete process info and cache the new process
 	CompleteProcessInfo(info)
 	success := AddOrUpdateProcessCache(event.Pid, info)
-	processCache.cache.Wait() // Ensure cache operation completes
-
 	if !success {
 		globalLogger.Debug("process", "Failed to cache new process PID %d", event.Pid)
 	}
