@@ -92,6 +92,31 @@ var (
 		},
 	)
 
+	processInfoDurations = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "bpfview_process_info_duration_seconds",
+			Help:    "Time spent collecting process information by level",
+			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 10),
+		},
+		[]string{"level"}, // level will be "minimal", "basic", "full"
+	)
+
+	processInfoLevelStats = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_process_info_level_total",
+			Help: "Number of process info collections by level",
+		},
+		[]string{"level", "result"}, // level will be minimal/basic/full, result success/failure
+	)
+
+	processInfoProcReads = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_process_info_proc_reads",
+			Help: "Number of /proc reads by process info level",
+		},
+		[]string{"level", "file"}, // track which files we're reading at each level
+	)
+
 	excludedEventsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "bpfview_excluded_events_total",
