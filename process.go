@@ -906,7 +906,7 @@ func CompleteProcessInfo(info *types.ProcessInfo, level types.ProcessInfoLevel) 
 	}
 
 	// Minimal level - always do these since they're cheap
-	if info.Username == "" && info.UID > 0 {
+	if info.Username == "" {
 		info.Username = GetUsernameFromUID(info.UID)
 		processInfoLevelStats.WithLabelValues("minimal", "success").Inc()
 	}
