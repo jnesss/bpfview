@@ -81,6 +81,7 @@ func main() {
 		dbPath           string
 		processCacheSize int64
 		processLevel     string
+		cacheTimeout     time.Duration
 	}
 
 	rootCmd := &cobra.Command{
@@ -264,8 +265,9 @@ func main() {
 			globalEngine = engine
 
 			// Initialize process cache
-			log.Printf("Initializing process cache with size %d...", config.processCacheSize)
-			processCache, err = NewProcessCache(config.processCacheSize)
+			log.Printf("Initializing process cache with size %d and TTL %v...",
+				config.processCacheSize, config.cacheTimeout)
+			processCache, err = NewProcessCache(config.processCacheSize, config.cacheTimeout)
 			if err != nil {
 				log.Fatalf("Failed to initialize process cache: %v", err)
 			}
@@ -436,7 +438,9 @@ func main() {
 
 	// Performance optimization options
 	rootCmd.Flags().Int64Var(&config.processCacheSize, "process-cache-size",
-		100000, "Maximum number of processes to cache")
+		10000, "Maximum number of processes to cache")
+	rootCmd.Flags().DurationVar(&config.cacheTimeout, "cache-timeout",
+		24*time.Hour, "Time after which cache entries expire (e.g., 1h, 30m)")
 
 	rootCmd.SetUsageTemplate(`Usage:
   {{.CommandPath}} [flags]
@@ -503,10 +507,11 @@ Output Options:
   --add-ip            Add host IP address to all log entries
                        Recommended when collecting from multiple hosts
   
-  --dbfile string.    Name of database file to use when using sqlite format     
+  --dbfile string.    Name of database file to use when using sqlite format       
   
 Performance Optimization Options:
-  --process-cache-size int  Maximum number of processes to cache (default 100000)
+  --process-cache-size int  Maximum number of processes to cache (default 10000)
+  --cache-timeout string    Time after which cache entries expire (e.g., 1h, 30m)
   --process-level string    Process information collection level (default "full"):
                               minimal - Only BPF-provided data, minimal /proc reads
                               basic   - Core process attributes (exe, cmdline) 

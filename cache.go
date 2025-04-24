@@ -2,18 +2,21 @@
 package main
 
 import (
+	"time"
+
 	"github.com/dgraph-io/ristretto"
 	"github.com/jnesss/bpfview/types"
 )
 
 // ProcessCache wraps Ristretto cache for process information
 type ProcessCache struct {
-	cache   *ristretto.Cache
-	maxSize int64
+	cache      *ristretto.Cache
+	maxSize    int64
+	defaultTTL time.Duration
 }
 
 // NewProcessCache creates a new Ristretto-backed process cache
-func NewProcessCache(maxSize int64) (*ProcessCache, error) {
+func NewProcessCache(maxSize int64, ttl time.Duration) (*ProcessCache, error) {
 	cfg := &ristretto.Config{
 		NumCounters: maxSize * 10,
 		MaxCost:     maxSize,
@@ -42,8 +45,9 @@ func NewProcessCache(maxSize int64) (*ProcessCache, error) {
 	}
 
 	return &ProcessCache{
-		cache:   cache,
-		maxSize: maxSize,
+		cache:      cache,
+		maxSize:    maxSize,
+		defaultTTL: ttl,
 	}, nil
 }
 
@@ -58,7 +62,7 @@ func (pc *ProcessCache) Get(pid uint32) (*types.ProcessInfo, bool) {
 
 // Set adds or updates a process in the cache
 func (pc *ProcessCache) Set(pid uint32, info *types.ProcessInfo) bool {
-	return pc.cache.Set(pid, info, 1)
+	return pc.cache.SetWithTTL(pid, info, 1, pc.defaultTTL)
 }
 
 // Delete removes a process from the cache
