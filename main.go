@@ -56,11 +56,12 @@ type readerContext struct {
 }
 
 var (
-	globalLogger      *Logger
-	globalEngine      *FilterEngine
-	globalSigmaEngine *SigmaEngine
-	globalSessionUid  string
-	responseManager   *ResponseManager
+	globalLogger        *Logger
+	globalEngine        *FilterEngine
+	globalExcludeEngine *ExclusionEngine
+	globalSigmaEngine   *SigmaEngine
+	globalSessionUid    string
+	responseManager     *ResponseManager
 )
 
 var BootTime time.Time
@@ -289,6 +290,15 @@ func main() {
 				log.Printf("  - Event queue size: %d", config.sigmaQueueSize)
 			}
 
+			// Initialize exclusion engine
+			exclusionConfig := ExclusionConfig{
+				CommNames:    config.filterConfig.ExcludeComm,
+				ExePaths:     config.filterConfig.ExcludeExePath,
+				UserNames:    config.filterConfig.ExcludeUser,
+				ContainerIDs: config.filterConfig.ExcludeContainer,
+			}
+			globalExcludeEngine = NewExclusionEngine(exclusionConfig, config.filterConfig.TrackTree)
+
 			log.Println("Initializing BPF programs...")
 			objs, err := setupBPF()
 			if err != nil {
@@ -380,6 +390,11 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ContainerIDs, "container-id", nil, "Filter by container ID (use '*' to match any container)")
 	rootCmd.PersistentFlags().BoolVar(&config.filterConfig.TrackTree, "tree", false, "Track process tree")
 
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludeComm, "exclude-comm", nil, "Exclude processes by command name")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludeExePath, "exclude-exe-path", nil, "Exclude processes by executable path")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludeUser, "exclude-user", nil, "Exclude processes by username")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludeContainer, "exclude-container", nil, "Exclude processes by container ID")
+
 	// Optional features
 	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
 	rootCmd.Flags().StringVar(&config.sigmaRulesDir, "sigma", "",
@@ -426,6 +441,12 @@ Process Filters:
   --exe strings           Filter by executable path (exact match or prefix)
   --container-id strings  Filter by container ID (use '*' to match any container)
   --tree                  Track entire process tree when a match is found
+
+Process Exclusions:
+  --exclude-comm strings       Exclude processes by command name
+  --exclude-exe-path strings   Exclude processes by executable path
+  --exclude-user strings       Exclude processes by username
+  --exclude-container strings  Exclude processes by container ID
 
 Network Filters:
   --protocol strings      Filter by protocol (TCP, UDP, ICMP)
@@ -488,9 +509,15 @@ Examples:
 
   # Monitor specific processes and their children
   bpfview --comm nginx,php-fpm --tree
+  
+  # Monitor all except specific processes
+  bpfview --exclude-comm "nginx,sshd" --exclude-user www-data
 
   # Full security monitoring with ECS output
   bpfview --format json-ecs --hash-binaries --add-hostname --add-ip
+  
+  # High-volume server optimization
+  bpfview --exclude-comm "nginx,postgres" --exclude-port "80,443,5432" --tree
 
 Global Flags:
   -h, --help           Show this help message
