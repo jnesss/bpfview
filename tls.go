@@ -261,7 +261,7 @@ func parseTCPTLS(data []byte, userEvent *types.UserSpaceTLSEvent) {
 			globalLogger.Info("tls", "Found SNI: %s", userEvent.SNI)
 		}
 		userEvent.SupportedVersions = extractSupportedVersions(data)
-		userEvent.CipherSuites = extractCipherSuites(data, 10)
+		userEvent.CipherSuites = extractCipherSuites(data, 99)
 		userEvent.SupportedGroups = extractSupportedGroups(data)
 		userEvent.KeyShareGroups = extractKeyShareGroups(data)
 		userEvent.ALPNValues = extractALPN(data)
@@ -269,7 +269,6 @@ func parseTCPTLS(data []byte, userEvent *types.UserSpaceTLSEvent) {
 
 	if userEvent.HandshakeType == 0x01 {
 		userEvent.JA4 = CalculateJA4(userEvent)
-		userEvent.JA4Hash = CalculateJA4Hash(userEvent.JA4)
 	}
 }
 
@@ -318,7 +317,6 @@ func parseQUICTLS(data []byte, userEvent *types.UserSpaceTLSEvent) {
 				packetType,
 				strings.ReplaceAll(userEvent.SNI, ".", "d"),
 				userEvent.QUICVersion)
-			userEvent.JA4Hash = CalculateJA4Hash(userEvent.JA4)
 		}
 	}
 }
