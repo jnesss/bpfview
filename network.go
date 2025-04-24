@@ -47,10 +47,12 @@ func protocolToString(proto uint8) string {
 
 // handleNetworkEvent processes network connection events
 func handleNetworkEvent(event *types.NetworkEvent) {
-	timers := NewTimerPair("network")
-	defer timers.ObserveDuration()
+	timer := GetPhaseTimer("network_event")
+	timer.StartTiming()
+	defer timer.EndTiming()
 
 	// Filter check right at the start
+	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.matchNetwork(event) {
 		return
 	}
@@ -59,13 +61,12 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 	//  This is not my favorite design pattern
 	//  But we are reliant on the processinfo for the processUID correlation, amongst other things
 
+	timer.StartPhase("process_lookup")
 	var processInfo *types.ProcessInfo
 	var exists bool
 
 	// Try up to 10 times with 5ms delay (50ms total max)
 	for i := 0; i < 10; i++ {
-		timers.IncrementAttempts()
-
 		processInfo, exists = GetProcessFromCache(event.Pid)
 		if exists {
 			break
@@ -73,8 +74,7 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	timers.StartProcessing(exists)
-
+	timer.StartPhase("enrich_data")
 	if !exists {
 		// Use minimal info if we still can't find process
 		processInfo = &types.ProcessInfo{
@@ -85,6 +85,7 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 	}
 
 	// Clean up process names
+	timer.StartPhase("prepare_message")
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 	direction := "→"
@@ -102,12 +103,15 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 		protocolToString(event.Protocol),
 		event.BytesCount)
 
+	timer.StartPhase("console_logging")
 	globalLogger.Info("network", "%s", msg.String())
 
+	timer.StartPhase("file_logging")
 	if globalLogger != nil {
 		globalLogger.LogNetwork(event, processInfo)
 	}
 
+	timer.StartPhase("sigma_detection")
 	if globalSigmaEngine != nil {
 
 		srcIPIP := uint32ToNetIP(event.SrcIP)

@@ -13,20 +13,20 @@ import (
 )
 
 func handleDNSEvent(event *types.BPFDNSRawEvent) error {
-	timers := NewTimerPair("dns")
-	defer timers.ObserveDuration()
+	timer := GetPhaseTimer("dns_event")
+	timer.StartTiming()
+	defer timer.EndTiming()
 
 	// Wait to start processing until we have processinfo
 	//  This is not my favorite design pattern
 	//  But we are reliant on the processinfo for the processUID correlation, amongst other things
 
+	timer.StartPhase("process_lookup")
 	var processInfo *types.ProcessInfo
 	var exists bool
 
 	// Try up to 10 times with 5ms delay (50ms total max)
 	for i := 0; i < 10; i++ {
-		timers.IncrementAttempts()
-
 		processInfo, exists = GetProcessFromCache(event.Pid)
 		if exists {
 			break
@@ -34,9 +34,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Signal processing start after cache attempts
-	timers.StartProcessing(exists)
-
+	timer.StartPhase("create_basic_info")
 	if !exists {
 		// Use minimal info if we still can't find process
 		processInfo = &types.ProcessInfo{
@@ -64,6 +62,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	}
 
 	// Parse DNS data if available
+	timer.StartPhase("parse_dns_data")
 	if event.DataLen > 0 {
 		actualDataLen := min(int(event.DataLen), len(event.Data))
 		data := event.Data[:actualDataLen]
@@ -100,6 +99,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 			}
 
 			// generate conversation id
+			timer.StartPhase("generate_correlation_ids")
 			if !userEvent.IsResponse {
 				// Use transaction ID + source port for outgoing queries
 				h := fnv.New32a()
@@ -115,17 +115,20 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	}
 
 	// Create IP addresses
+	timer.StartPhase("network_conversion")
 	srcIP := uint32ToNetIP(event.SrcAddr)
 	dstIP := uint32ToNetIP(event.DstAddr)
 	userEvent.SourceIP = srcIP
 	userEvent.DestIP = dstIP
 
 	// Filter check before any logging
+	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.matchDNS(&userEvent) {
 		return nil
 	}
 
 	// Generate connection ID (same as network connection uid)
+	timer.StartPhase("generate_uids")
 	uid := outputformats.GenerateBidirectionalConnID(event.Pid, event.Ppid, userEvent.SourceIP, userEvent.DestIP, event.SPort, event.DPort)
 	communityID := outputformats.GenerateCommunityID(
 		userEvent.SourceIP,
@@ -142,6 +145,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	}
 
 	// Build the message using strings.Builder for efficiency
+	timer.StartPhase("console_logging")
 	var msg strings.Builder
 	fmt.Fprintf(&msg, "%s: conn_uid=%s tx_id=0x%04x pid=%d comm=%s\n",
 		eventType, uid, userEvent.TransactionID, userEvent.Pid, userEvent.Comm)
@@ -178,6 +182,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	globalLogger.Info("dns", "%s", msg.String())
 
 	// Submit DNS queries to Sigma detection if enabled
+	timer.StartPhase("sigma_detection")
 	if globalSigmaEngine != nil && !userEvent.IsResponse {
 		for _, q := range userEvent.Questions {
 			// Map fields for Sigma detection
@@ -216,6 +221,7 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 	}
 
 	// Handle the file logging through the formatter
+	timer.StartPhase("file_logging")
 	if globalLogger != nil {
 		if processinfo, exists := GetProcessFromCache(event.Pid); exists {
 			return globalLogger.LogDNS(&userEvent, processinfo)

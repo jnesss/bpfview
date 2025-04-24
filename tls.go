@@ -66,17 +66,17 @@ func getQuicPacketType(firstByte byte) uint8 {
 }
 
 func handleTLSEvent(event *types.BPFTLSEvent) {
-	timers := NewTimerPair("tls")
-	defer timers.ObserveDuration()
+	timer := GetPhaseTimer("tls_event")
+	timer.StartTiming()
+	defer timer.EndTiming()
 
 	// Wait for process info
+	timer.StartPhase("process_lookup")
 	var processInfo *types.ProcessInfo
 	var exists bool
 
 	// Try up to 10 times with 5ms delay (50ms total max)
 	for i := 0; i < 10; i++ {
-		timers.IncrementAttempts()
-
 		processInfo, exists = GetProcessFromCache(event.Pid)
 		if exists {
 			break
@@ -84,9 +84,7 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Signal processing start after cache attempts
-	timers.StartProcessing(exists)
-
+	timer.StartPhase("create_basic_info")
 	if !exists {
 		// Use minimal info if we still can't find process
 		processInfo = &types.ProcessInfo{
@@ -142,6 +140,7 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 	globalLogger.Info("tls", "DataLen: %d, Protocol: %d", event.DataLen, event.Protocol)
 
 	// Parse TLS data if available
+	timer.StartPhase("parse_tls_data")
 	if event.DataLen > 0 {
 		actualDataLen := min(int(event.DataLen), len(event.Data))
 		globalLogger.Info("tls", "Actual data length for parsing: %d", actualDataLen)
@@ -160,11 +159,13 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 	}
 
 	// Filter check before any logging
+	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.matchTLS(&userEvent) {
 		return
 	}
 
 	// Print the event
+	timer.StartPhase("console_logging")
 	var msg strings.Builder
 	fmt.Fprintf(&msg, "UID: %s Process: %s (PID: %d, PPID: %d, Parent: %s)\n",
 		uid, userEvent.Comm, userEvent.Pid, userEvent.Ppid, userEvent.ParentComm)
@@ -233,6 +234,7 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 
 	globalLogger.Info("tls", "%s", msg.String())
 
+	timer.StartPhase("file_logging")
 	if globalLogger != nil {
 		globalLogger.LogTLS(&userEvent, processInfo)
 	}
