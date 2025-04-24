@@ -298,6 +298,7 @@ func main() {
 				ExePaths:     config.filterConfig.ExcludeExePath,
 				UserNames:    config.filterConfig.ExcludeUser,
 				ContainerIDs: config.filterConfig.ExcludeContainer,
+				ExcludePorts: config.filterConfig.ExcludePorts,
 			}
 			globalExcludeEngine = NewExclusionEngine(exclusionConfig, config.filterConfig.TrackTree)
 
@@ -400,6 +401,7 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludeExePath, "exclude-exe-path", nil, "Exclude processes by executable path")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludeUser, "exclude-user", nil, "Exclude processes by username")
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludeContainer, "exclude-container", nil, "Exclude processes by container ID")
+	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.ExcludePorts, "exclude-port", nil, "Exclude specific ports from monitoring")
 
 	// Optional features
 	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
