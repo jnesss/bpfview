@@ -85,6 +85,14 @@ var (
 		},
 		[]string{"level", "result"}, // level will be minimal/basic/full, result success/failure
 	)
+
+	processLevelInfo = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "bpfview_process_level_info",
+			Help: "Current process information level setting",
+		},
+		[]string{"level"},
+	)
 )
 
 // Cache metrics

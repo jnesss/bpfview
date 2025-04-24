@@ -662,6 +662,11 @@ Key optimization features include:
 - Cache size management for memory optimization
 - Container-specific optimizations
 
+The `--process-level` option provides three levels of detail collection:
+- **full** (default): Complete process information including environment variables, working directory, and container details
+- **basic**: Core process attributes (executable path, command line) with minimal /proc reads
+- **minimal**: Only kernel-provided data with almost no /proc filesystem access
+
 These features allow BPFView to scale from development environments to high-volume production servers while maintaining low overhead.
 
 ## Technical Implementation

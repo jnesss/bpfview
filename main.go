@@ -61,6 +61,7 @@ var (
 	globalExcludeEngine *ExclusionEngine
 	globalSigmaEngine   *SigmaEngine
 	globalSessionUid    string
+	globalProcessLevel  types.ProcessInfoLevel
 	responseManager     *ResponseManager
 )
 
@@ -79,6 +80,7 @@ func main() {
 		sigmaQueueSize   int
 		dbPath           string
 		processCacheSize int64
+		processLevel     string
 	}
 
 	rootCmd := &cobra.Command{
@@ -299,6 +301,10 @@ func main() {
 			}
 			globalExcludeEngine = NewExclusionEngine(exclusionConfig, config.filterConfig.TrackTree)
 
+			globalProcessLevel = getProcessInfoLevel(config.processLevel)
+			processLevelInfo.WithLabelValues(config.processLevel).Set(1)
+			log.Printf("Using process information level: %s", config.processLevel)
+
 			log.Println("Initializing BPF programs...")
 			objs, err := setupBPF()
 			if err != nil {
@@ -418,6 +424,7 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVar(&config.filterConfig.SNIHosts, "sni", nil, "Filter by SNI host (supports wildcards)")
 
 	// Output options
+	rootCmd.PersistentFlags().StringVar(&config.processLevel, "process-level", "full", "Process information collection level (minimal, basic, full)")
 	rootCmd.PersistentFlags().StringVar(&config.logLevel, "log-level", "info", "Log level (error, warning, info, debug, trace)")
 	rootCmd.PersistentFlags().BoolVar(&config.showTimestamp, "log-timestamp", false, "Show timestamps in console logs")
 	rootCmd.PersistentFlags().StringVar(&config.format, "format", "text", "Output log format: text, json, json-ecs, gelf, sqlite")
@@ -498,8 +505,11 @@ Output Options:
   
 Performance Optimization Options:
   --process-cache-size int  Maximum number of processes to cache (default 100000)
-                  
-
+  --process-level string    Process information collection level (default "full"):
+                              minimal - Only BPF-provided data, minimal /proc reads
+                              basic   - Core process attributes (exe, cmdline) 
+                              full    - Complete information including env vars and container ID
+                              
 Examples:
   # Monitor all container activity
   bpfview --container-id "*"
@@ -1010,4 +1020,15 @@ func loadResponseProgram() responseObjects {
 		log.Fatalf("loading response objects: %v", err)
 	}
 	return objs
+}
+
+func getProcessInfoLevel(levelStr string) types.ProcessInfoLevel {
+	switch strings.ToLower(levelStr) {
+	case "minimal":
+		return types.ProcessLevelMinimal
+	case "basic":
+		return types.ProcessLevelBasic
+	default:
+		return types.ProcessLevelFull
+	}
 }
