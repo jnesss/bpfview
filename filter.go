@@ -29,6 +29,7 @@ type FilterConfig struct {
 	ExcludeExePath   []string
 	ExcludeUser      []string
 	ExcludeContainer []string
+	ExcludePorts     []string
 
 	// Network filters
 	SrcIPs    []string

@@ -51,6 +51,20 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 	timer.StartTiming()
 	defer timer.EndTiming()
 
+	// Add port exclusion check right at the start
+	if globalExcludeEngine != nil {
+		// Check source port
+		if _, excluded := globalExcludeEngine.excludedPorts[event.SrcPort]; excluded {
+			excludedEventsTotal.WithLabelValues("network", "port", fmt.Sprintf("%d", event.SrcPort)).Inc()
+			return
+		}
+		// Check destination port
+		if _, excluded := globalExcludeEngine.excludedPorts[event.DstPort]; excluded {
+			excludedEventsTotal.WithLabelValues("network", "port", fmt.Sprintf("%d", event.DstPort)).Inc()
+			return
+		}
+	}
+
 	// Filter check right at the start
 	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.matchNetwork(event) {

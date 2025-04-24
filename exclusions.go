@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,7 @@ type ExclusionConfig struct {
 	ExePaths     []string
 	UserNames    []string
 	ContainerIDs []string
+	ExcludePorts []string
 }
 
 // ExclusionState tracks process tree state for exclusions
@@ -39,6 +42,7 @@ type ExclusionEngine struct {
 	exePathMatcher   *PatternMatcher
 	userMatcher      *PatternMatcher
 	containerMatcher *PatternMatcher
+	excludedPorts    map[uint16]struct{}
 
 	// Tree tracking
 	state        *ExclusionState
@@ -47,9 +51,20 @@ type ExclusionEngine struct {
 
 func NewExclusionEngine(config ExclusionConfig, enableTreeTracking bool) *ExclusionEngine {
 	e := &ExclusionEngine{
-		config:       config,
-		treeTracking: enableTreeTracking,
-		state:        NewExclusionState(),
+		config:        config,
+		treeTracking:  enableTreeTracking,
+		state:         NewExclusionState(),
+		excludedPorts: make(map[uint16]struct{}),
+	}
+
+	// Parse port strings to uint16
+	for _, portStr := range config.ExcludePorts {
+		// Handle potential comma-separated values
+		for _, p := range strings.Split(portStr, ",") {
+			if port, err := strconv.ParseUint(strings.TrimSpace(p), 10, 16); err == nil {
+				e.excludedPorts[uint16(port)] = struct{}{}
+			}
+		}
 	}
 
 	// Initialize pattern matchers

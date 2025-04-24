@@ -650,6 +650,19 @@ sudo bpfview --comm nginx --exclude-comm "chronyd,sshd"
 
 Exclusions are evaluated during event processing and provide a high-performance way to filter out noisy system processes. When exclusions are enabled, BPFView reports metrics about excluded processes that can be viewed via the Prometheus endpoint.
 
+### Network Exclusions
+
+BPFView supports excluding specific network traffic from monitoring, which is useful for filtering out high-volume services:
+
+```bash
+# Exclude specific ports (e.g., HTTP, HTTPS, NTP)
+sudo bpfview --exclude-port "80,443,123"
+# Combine with process exclusions
+sudo bpfview --exclude-port "80,443" --exclude-comm "chronyd"
+```
+
+Like process exclusions, network exclusions are evaluated early in event processing to efficiently filter out high-volume traffic. Metrics about excluded network events are available via the Prometheus endpoint.
+
 ## Performance Optimization
 
 BPFView is designed to operate efficiently with minimal performance impact, but can be further optimized for specific environments and high-volume workloads.
