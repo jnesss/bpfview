@@ -106,35 +106,44 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 		return
 	}
 
-	timer := NewEventTimer("process_exit")
+	// Get timer for this handler
+	timer := GetPhaseTimer("process_exit")
+	timer.StartTiming()
+
+	// Start first phase
+	timer.StartPhase("init")
 
 	// Record event count
 	eventCounter.WithLabelValues("process").Inc()
 
 	// Get the process from cache
+	timer.StartPhase("cache_lookup")
 	info, exists := GetProcessFromCache(event.Pid)
 	if !exists {
 		// Process not in cache, nothing to update
 		//  (we could try to update based on comm + PID but we wouldn't have UID..)
-		timer.ObserveDuration()
+		timer.EndTiming()
 		return
 	}
 
 	// Only update if we haven't recorded an exit time yet
 	if !info.ExitTime.IsZero() {
 		// Already has exit time, skip
-		timer.ObserveDuration()
+		timer.EndTiming()
 		return
 	}
 
+	timer.StartPhase("info_update")
 	info.ExitTime = BpfTimestampToTime(event.Timestamp)
 	info.ExitCode = event.ExitCode
 	info.EventType = "exit" // Update the event type
 
 	// Update the process in cache
+	timer.StartPhase("cache_update")
 	AddOrUpdateProcessCache(event.Pid, info)
 
 	// Debug log for event details
+	timer.StartPhase("debug_logging")
 	globalLogger.Trace("process", "Processing EXIT event for PID %d\n", event.Pid)
 	globalLogger.Trace("process", "BPF data - Comm: %s, UID: %d, GID: %d\n",
 		string(bytes.TrimRight(event.Comm[:], "\x00")),
@@ -142,13 +151,15 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 		event.Gid)
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
+	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
 		excludedEventsTotal.WithLabelValues("process_exit").Inc()
-		timer.ObserveDuration()
+		timer.EndTiming()
 		return
 	}
 
 	// For EXIT events
+	timer.StartPhase("message_formatting")
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 	var msg strings.Builder
 	fmt.Fprintf(&msg, "EXIT: PID=%d comm=%s\n", info.PID, info.Comm)
@@ -162,8 +173,10 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 		fmt.Fprintf(&msg, "\n      Duration: %s", duration)
 	}
 
+	timer.StartPhase("console_logging")
 	globalLogger.Info("process", "%s", msg.String())
 
+	timer.StartPhase("parent_lookup")
 	var parentinfo *types.ProcessInfo
 	if pinfo, exists := GetProcessFromCache(info.PPID); exists {
 		parentinfo = pinfo
@@ -175,12 +188,13 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	}
 
 	// Log to file with proper structured format if logger is available
+	timer.StartPhase("file_logging")
 	if globalLogger != nil {
 		globalLogger.LogProcess(event, info, parentinfo)
 	}
 
 	// End timer before the sleep
-	timer.ObserveDuration()
+	timer.EndTiming()
 
 	// Remove process from cache one second later after processing EXIT
 	//  This delay preserves the cache for a process exec that might come out of order
@@ -218,10 +232,12 @@ This strategy balances performance (most processes hit the fast path) with relia
 */
 
 func handleProcessForkEvent(event *types.ProcessEvent) {
-	timers := NewTimerPair("process_fork")
-	defer timers.ObserveDuration()
+	timer := GetPhaseTimer("process_fork")
+	timer.StartTiming()
+	defer timer.EndTiming()
 
 	// Debug logging
+	timer.StartPhase("init")
 	globalLogger.Trace("process", "Processing FORK event for PID %d\n", event.Pid)
 
 	// Create basic info from kernel event
@@ -237,11 +253,11 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	}
 
 	// Try to get parent info with exponential backoff
+	timer.StartPhase("parent_lookup")
 	var parentInfo *types.ProcessInfo
 	var parentExists bool
 
 	for attempt := 0; attempt < 4; attempt++ { // Max 15ms total (1+2+4+8)
-		timers.IncrementAttempts()
 
 		// Fast Path: Try cache first
 		if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
@@ -276,10 +292,11 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 			"Child PID=%d comm=%s, Parent PID=%d", event.Pid, info.Comm, event.Ppid)
 	}
 
-	timers.StartProcessing(parentExists)
+	timer.StartPhase("event_counting")
 	eventCounter.WithLabelValues("process").Inc()
 
 	// Inherit parent info if found
+	timer.StartPhase("info_enrichment")
 	if parentExists {
 		InheritFromParent(info, parentInfo)
 	}
@@ -291,24 +308,30 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	//  3. We don't need to read /proc because either:
 	//     Parent info exists and we inherit
 	//     Parent info doesn't exist and retrying won't help
+	timer.StartPhase("process_completion")
 	CompleteProcessInfo(info, types.ProcessLevelMinimal)
+
+	timer.StartPhase("cache_update")
 	success := AddOrUpdateProcessCache(event.Pid, info)
 	if !success {
 		globalLogger.Debug("process", "Failed to cache new process PID %d", event.Pid)
 	}
 
 	// Add to process tree if exists
+	timer.StartPhase("process_tree_update")
 	if globalEngine != nil {
 		globalEngine.processTree.AddProcess(info)
 	}
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
+	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
 		excludedEventsTotal.WithLabelValues("process_fork").Inc()
 		return
 	}
 
 	// Log to console with enhanced information
+	timer.StartPhase("message_formatting")
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
 	// Build the message using strings.Builder - same pattern as handleProcessExecEvent
@@ -345,10 +368,12 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 		}
 	}
 
+	timer.StartPhase("console_logging")
 	globalLogger.Info("process", "%s", msg.String())
 
 	// BUG:  This is NOT handling FORK-EXEC well.  Need to optimize this!!
 	// Log to file with proper structured format if logger is available
+	timer.StartPhase("file_logging")
 	if globalLogger != nil {
 		if !parentExists {
 			// Create an empty parent info object if parent wasn't found
@@ -358,6 +383,7 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	}
 
 	// If Sigma detection is enabled, submit event - same as handleProcessExecEvent
+	timer.StartPhase("sigma_detection")
 	if globalSigmaEngine != nil {
 		// Include core fields needed for Sigma rule matching
 		sigmaEvent := map[string]interface{}{
@@ -386,10 +412,12 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 }
 
 func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
-	timers := NewTimerPair("process_exec")
-	defer timers.ObserveDuration()
+	timer := GetPhaseTimer("process_exec")
+	timer.StartTiming()
+	defer timer.EndTiming()
 
 	// Debug logging
+	timer.StartPhase("init")
 	globalLogger.Trace("process", "Processing EXEC event for PID %d\n", event.Pid)
 
 	// Create basic info from kernel event
@@ -405,6 +433,7 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	}
 
 	// Get executable path from kernel data if available
+	timer.StartPhase("kernel_exepath")
 	if len(event.ExePath) > 0 {
 		kernelExePath := string(bytes.TrimRight(event.ExePath[:], "\x00"))
 		if kernelExePath != "" {
@@ -414,6 +443,7 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	}
 
 	// Get command line from BPF map if available
+	timer.StartPhase("kernel_cmdline")
 	if bpfObjs != nil {
 		if cmdline, err := LookupCmdline(bpfObjs, event.Pid); err == nil && cmdline != "" {
 			info.CmdLine = cmdline
@@ -422,46 +452,49 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	}
 
 	// First /proc check - may catch the process before exec is complete
-	timers.IncrementAttempts()
+	timer.StartPhase("proc_check1")
 	firstProcInfo := CollectProcMetadata(event.Pid)
 	MergeProcessInfo(info, firstProcInfo, "first")
 
 	// Set username based on current UID
+	timer.StartPhase("username_lookup")
 	info.Username = GetUsernameFromUID(info.UID)
 
 	// Wait briefly for exec to complete
-	timers.IncrementAttempts()
+	timer.StartPhase("exec_wait")
 	time.Sleep(2 * time.Millisecond)
 
 	// Second /proc check - this should have the final state
-	timers.IncrementAttempts()
+	timer.StartPhase("proc_check2")
 	secondProcInfo := CollectProcMetadata(event.Pid)
-
-	// Now we're done with waits, start processing timer
-	timers.StartProcessing(true)
-
 	MergeProcessInfo(info, secondProcInfo, "second")
 
 	// Apply standard enrichment and finalization
+	timer.StartPhase("process_enrichment")
 	CompleteProcessInfo(info, types.ProcessLevelFull)
 
 	// Add to process cache
+	timer.StartPhase("cache_update")
 	AddOrUpdateProcessCache(event.Pid, info)
 
+	timer.StartPhase("process_tree_update")
 	if globalEngine != nil {
 		globalEngine.processTree.AddProcess(info)
 	}
 
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
+	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
 		excludedEventsTotal.WithLabelValues("process_exec").Inc()
 		return
 	}
 
 	// Record event
+	timer.StartPhase("event_counting")
 	eventCounter.WithLabelValues("process").Inc()
 
 	// Log to console with enhanced information
+	timer.StartPhase("message_formatting")
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))
 
 	// Build the message using strings.Builder
@@ -480,8 +513,10 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 		fmt.Fprintf(&msg, "\n      Container: %s", info.ContainerID)
 	}
 
+	timer.StartPhase("console_logging")
 	globalLogger.Info("process", "%s", msg.String())
 
+	timer.StartPhase("parent_lookup")
 	var parentinfo *types.ProcessInfo
 	if pinfo, exists := GetProcessFromCache(event.Ppid); exists {
 		parentinfo = pinfo
@@ -498,11 +533,13 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	}
 
 	// Log to file with proper structured format if logger is available
+	timer.StartPhase("file_logging")
 	if globalLogger != nil {
 		globalLogger.LogProcess(event, info, parentinfo)
 	}
 
 	// If Sigma detection is enabled, submit event
+	timer.StartPhase("sigma_detection")
 	if globalSigmaEngine != nil {
 		// Include core fields needed for Sigma rule matching
 		sigmaEvent := map[string]interface{}{
@@ -1082,9 +1119,11 @@ func sanitizeCommandLine(cmdline string) string {
 }
 
 func initializeProcessCache() {
-	timer := NewEventTimer("cache_init")
-	defer timer.ObserveDuration()
+	timer := GetPhaseTimer("cache_init")
+	timer.StartTiming()
+	defer timer.EndTiming()
 
+	timer.StartPhase("scan_proc")
 	procReadsTotal.Inc()
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -1093,6 +1132,7 @@ func initializeProcessCache() {
 	}
 
 	var processCount, cachedCount int
+	timer.StartPhase("populate_cache")
 	for _, entry := range entries {
 		pid, err := strconv.ParseUint(entry.Name(), 10, 32)
 		if err != nil {
@@ -1113,17 +1153,22 @@ func initializeProcessCache() {
 		}
 
 		// Regular process
+		timer.StartPhase("collect_metadata")
 		info := CollectProcMetadata(uint32(pid))
 		if info != nil && (info.ExePath != "" || info.CmdLine != "") {
 			info.EventType = "exec"
 
 			// Apply standard enrichment and finalization
+			timer.StartPhase("complete_info")
 			CompleteProcessInfo(info, types.ProcessLevelFull)
+
+			timer.StartPhase("update_cache")
 			AddOrUpdateProcessCache(uint32(pid), info)
 			cachedCount++
 		}
 	}
 
+	timer.StartPhase("logging")
 	if globalLogger != nil {
 		globalLogger.Debug("process", "Process cache initialization complete: found %d processes, cached %d",
 			processCount, cachedCount)
