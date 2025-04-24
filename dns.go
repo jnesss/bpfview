@@ -44,6 +44,11 @@ func handleDNSEvent(event *types.BPFDNSRawEvent) error {
 		}
 	}
 
+	// Early exclusion check before any more expensive operations
+	if globalExcludeEngine != nil && globalExcludeEngine.ShouldExclude(processInfo) {
+		return nil
+	}
+
 	// Clean up process names
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
 	parentComm := string(bytes.TrimRight(event.ParentComm[:], "\x00"))

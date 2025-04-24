@@ -24,6 +24,12 @@ type FilterConfig struct {
 	TrackTree       bool
 	HashBinaries    bool
 
+	// Process exclusions
+	ExcludeComm      []string
+	ExcludeExePath   []string
+	ExcludeUser      []string
+	ExcludeContainer []string
+
 	// Network filters
 	SrcIPs    []string
 	DstIPs    []string

@@ -110,6 +110,24 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	timer := GetPhaseTimer("process_exit")
 	timer.StartTiming()
 
+	// Create minimal info for early exclusion check
+	info := &types.ProcessInfo{
+		PID:      event.Pid,
+		PPID:     event.Ppid,
+		Comm:     comm,
+		Username: GetUsernameFromUID(event.Uid),
+	}
+
+	// Notify exclusion engine of process exit for tree tracking
+	if globalExcludeEngine != nil {
+		globalExcludeEngine.HandleProcessExit(event.Pid)
+	}
+
+	// Early exclusion check before any expensive operations
+	if globalExcludeEngine != nil && globalExcludeEngine.ShouldExclude(info) {
+		return
+	}
+
 	// Start first phase
 	timer.StartPhase("init")
 
@@ -250,6 +268,15 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 		GID:        event.Gid,
 		StartTime:  BpfTimestampToTime(event.Timestamp),
 		EventType:  "fork",
+		Username:   GetUsernameFromUID(event.Uid),
+	}
+
+	// Check for inclusion first if tree tracking is enabled
+	if !shouldIncludeProcess(event.Pid, event.Ppid) {
+		// Early exclusion check before any expensive operations
+		if globalExcludeEngine != nil && globalExcludeEngine.ShouldExclude(info) {
+			return
+		}
 	}
 
 	// Try to get parent info with exponential backoff
@@ -448,6 +475,14 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 		if cmdline, err := LookupCmdline(bpfObjs, event.Pid); err == nil && cmdline != "" {
 			info.CmdLine = cmdline
 			globalLogger.Trace("process", "PID %d: Got CmdLine from BPF: [%v]\n", event.Pid, info.CmdLine)
+		}
+	}
+
+	// Check for inclusion first if tree tracking is enabled
+	if !shouldIncludeProcess(event.Pid, event.Ppid) {
+		// Early exclusion check before any expensive operations
+		if globalExcludeEngine != nil && globalExcludeEngine.ShouldExclude(info) {
+			return
 		}
 	}
 
@@ -1116,6 +1151,20 @@ func sanitizeCommandLine(cmdline string) string {
 	cmdline = strings.ReplaceAll(cmdline, "\n", "\\n")
 	cmdline = strings.ReplaceAll(cmdline, "|", " ")
 	return cmdline
+}
+
+func shouldIncludeProcess(pid uint32, ppid uint32) bool {
+	if globalEngine == nil || !globalEngine.config.TrackTree {
+		return false
+	}
+	if !globalEngine.processTree.IsInTree(ppid) {
+		return false
+	}
+	if globalExcludeEngine == nil {
+		return false
+	}
+	globalExcludeEngine.MarkProcessIncluded(pid)
+	return true
 }
 
 func initializeProcessCache() {

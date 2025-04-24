@@ -547,7 +547,7 @@ Response actions provide a powerful way to automatically contain threats as soon
 
 BPFView offers comprehensive filtering capabilities that can be combined to precisely target what you want to monitor:
 
-### Process Filtering
+### Process Filtering (Selective Inclusion)
 ```bash
 # Filter by command name
 sudo bpfview --comm nginx,php-fpm
@@ -626,6 +626,43 @@ sudo bpfview --format json  # Use JSON format (default: text)
 sudo bpfview --format json-ecs  # Use Elastic Common Schema format
 sudo bpfview --format gelf  # Use Graylog Extended Log Format
 ```
+
+### Process Exclusions (Selective Exclusion)
+
+BPFView allows you to exclude specific processes from monitoring, which is useful for filtering out high-volume system processes that aren't relevant to your analysis:
+
+```bash
+# Exclude processes by command name
+sudo bpfview --exclude-comm "chronyd,bpfview"
+
+# Exclude processes by executable path
+sudo bpfview --exclude-exe-path "/usr/sbin/"
+
+# Exclude processes by username
+sudo bpfview --exclude-user "nobody,systemd-resolve" 
+
+# Exclude processes by container ID
+sudo bpfview --exclude-container "3f4552dfc342"
+
+# Combine exclusions with inclusions
+sudo bpfview --comm nginx --exclude-comm "chronyd,sshd"
+```
+
+Exclusions are evaluated during event processing and provide a high-performance way to filter out noisy system processes. When exclusions are enabled, BPFView reports metrics about excluded processes that can be viewed via the Prometheus endpoint.
+
+## Performance Optimization
+
+BPFView is designed to operate efficiently with minimal performance impact, but can be further optimized for specific environments and high-volume workloads.
+
+For detailed information about performance features, tuning options, and monitoring capabilities, see the [Performance Optimization Guide](PERFORMANCE.md).
+
+Key optimization features include:
+- Process exclusion filters to ignore high-volume system processes
+- Process information level control to reduce /proc filesystem access
+- Cache size management for memory optimization
+- Container-specific optimizations
+
+These features allow BPFView to scale from development environments to high-volume production servers while maintaining low overhead.
 
 ## Technical Implementation
 

@@ -35,9 +35,9 @@ var (
 	excludedEventsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "bpfview_excluded_events_total",
-			Help: "Total number of events excluded by filters",
+			Help: "Total number of events excluded by exclusion rule",
 		},
-		[]string{"filter_type"},
+		[]string{"event_type", "rule_type", "pattern"}, // Add pattern for more detail
 	)
 
 	operationResults = promauto.NewCounterVec(
@@ -146,6 +146,67 @@ var (
 			Help: "Percentage of handler time spent in each phase",
 		},
 		[]string{"handler", "phase"},
+	)
+)
+
+var (
+	// Tree tracking metrics
+	treeTrackedProcesses = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "bpfview_tree_tracked_processes",
+			Help: "Number of processes being tracked due to tree relationships",
+		},
+	)
+
+	treeExcludedProcesses = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "bpfview_tree_excluded_processes",
+			Help: "Number of processes excluded due to parent exclusion",
+		},
+	)
+
+	// Exclusion metrics
+	exclusionPatternCount = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "bpfview_exclusion_patterns_total",
+			Help: "Number of active exclusion patterns by type",
+		},
+		[]string{"pattern_type"},
+	)
+
+	exclusionMatchRate = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "bpfview_exclusion_match_rate",
+			Help:    "Rate of exclusion pattern matches per second",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 15), // From 1 to 16K/sec
+		},
+		[]string{"pattern_type"},
+	)
+
+	exclusionCacheStats = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "bpfview_exclusion_cache_stats",
+			Help: "Statistics about the exclusion pattern matching cache",
+		},
+		[]string{"type"}, // hits, misses, size
+	)
+
+	excludedEventSize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "bpfview_excluded_event_size_bytes",
+			Help:    "Size of excluded events in bytes",
+			Buckets: prometheus.ExponentialBuckets(64, 2, 10),
+		},
+		[]string{"event_type"},
+	)
+
+	exclusionLatency = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "bpfview_exclusion_latency_seconds",
+			Help:    "Time taken to evaluate exclusion patterns",
+			Buckets: prometheus.ExponentialBuckets(0.000001, 2, 10), // 1µs to ~1ms
+		},
+		[]string{"event_type"},
 	)
 )
 
