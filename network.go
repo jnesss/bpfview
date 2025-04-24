@@ -84,6 +84,11 @@ func handleNetworkEvent(event *types.NetworkEvent) {
 		}
 	}
 
+	// Early exclusion check before any more expensive operations
+	if globalExcludeEngine != nil && globalExcludeEngine.ShouldExclude(processInfo) {
+		return
+	}
+
 	// Clean up process names
 	timer.StartPhase("prepare_message")
 	comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
