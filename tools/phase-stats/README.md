@@ -1,6 +1,6 @@
 # Phase Stats
 
-A utility tool for analyzing phase timings of BPFView handlers.
+A utility tool for analyzing phase timings of BPFView event handlers and exclusion engine performance.
 
 ## Building
 
@@ -10,7 +10,6 @@ go build -o phase-stats main.go
 
 ## Usage
 
-```bash
 # List all available handlers
 ./phase-stats -list
 
@@ -20,96 +19,109 @@ go build -o phase-stats main.go
 # Show stats for all handlers
 ./phase-stats -all
 
+# Show exclusion statistics
+./phase-stats -exclusions
+
+# Show all handlers and exclusion statistics
+./phase-stats -all -exclusions
+
+# Auto-refresh statistics every 5 seconds
+./phase-stats -refresh 5
+
 # Specify a different metrics endpoint
 ./phase-stats -url http://hostname:2112/metrics -handler process_exec
 ```
 
-## Example Output
+## Handler Timing Analysis
+
+The tool breaks down each handler's processing phases to identify bottlenecks:
 
 ```
-Dns_event Handler Timing Breakdown
-=====================================
-dns_event: avg=1.346ms (count=4)
-  ├─ console_logging: avg=0.313ms (23.3%)
-  ├─ file_logging: avg=0.014ms (1.1%)
-  ├─ generate_uids: avg=0.005ms (0.4%)
-  ├─ sigma_detection: avg=0.002ms (0.2%)
-  ├─ parse_dns_data: avg=0.001ms (0.1%)
-  ├─ generate_correlation_ids: avg=0.001ms (0.1%)
-  ├─ create_basic_info: avg=0.001ms (0.1%)
-  ├─ process_lookup: avg=0.001ms (0.0%)
-  ├─ network_conversion: avg=0.000ms (0.0%)
-  └─ filtering: avg=0.000ms (0.0%)
-
-Network_event Handler Timing Breakdown
-=====================================
-network_event: avg=0.072ms (count=1381)
-  ├─ file_logging: avg=0.022ms (30.7%)
-  ├─ console_logging: avg=0.017ms (22.5%)
-  ├─ sigma_detection: avg=0.008ms (11.2%)
-  ├─ prepare_message: avg=0.005ms (7.4%)
-  ├─ process_lookup: avg=0.003ms (3.5%)
-  ├─ filtering: avg=0.000ms (0.4%)
-  └─ enrich_data: avg=0.000ms (0.1%)
-
 Process_exec Handler Timing Breakdown
 =====================================
-process_exec: avg=1.982ms (count=553)
-  ├─ exec_wait: avg=1.390ms (66.1%)
-  ├─ proc_check1: avg=0.138ms (6.7%)
-  ├─ process_enrichment: avg=0.138ms (4.1%)
-  ├─ proc_check2: avg=0.089ms (3.4%)
-  ├─ console_logging: avg=0.049ms (2.3%)
-  ├─ file_logging: avg=0.041ms (1.9%)
-  ├─ kernel_cmdline: avg=0.014ms (0.7%)
-  ├─ cache_update: avg=0.012ms (0.6%)
-  ├─ message_formatting: avg=0.005ms (0.3%)
-  ├─ sigma_detection: avg=0.004ms (0.2%)
-  ├─ init: avg=0.004ms (0.2%)
-  ├─ parent_lookup: avg=0.003ms (0.1%)
-  ├─ process_tree_update: avg=0.001ms (0.1%)
-  ├─ event_counting: avg=0.001ms (0.0%)
-  ├─ kernel_exepath: avg=0.001ms (0.0%)
-  ├─ filtering: avg=0.000ms (0.0%)
-  └─ username_lookup: avg=0.000ms (0.0%)
-
-Process_exit Handler Timing Breakdown
-=====================================
-process_exit: avg=0.128ms (count=692)
-  ├─ file_logging: avg=0.060ms (47.2%)
-  ├─ console_logging: avg=0.037ms (28.5%)
-  ├─ cache_update: avg=0.010ms (7.4%)
-  ├─ message_formatting: avg=0.008ms (6.2%)
-  ├─ debug_logging: avg=0.005ms (3.1%)
-  ├─ cache_lookup: avg=0.003ms (2.0%)
-  ├─ parent_lookup: avg=0.002ms (1.2%)
-  ├─ init: avg=0.002ms (1.0%)
-  ├─ info_update: avg=0.000ms (0.2%)
-  └─ filtering: avg=0.000ms (0.2%)
-
-Process_fork Handler Timing Breakdown
-=====================================
-process_fork: avg=0.141ms (count=801)
-  ├─ file_logging: avg=0.048ms (35.7%)
-  ├─ console_logging: avg=0.045ms (30.1%)
-  ├─ cache_update: avg=0.013ms (7.7%)
-  ├─ message_formatting: avg=0.006ms (4.5%)
-  ├─ process_completion: avg=0.006ms (4.0%)
-  ├─ init: avg=0.006ms (2.7%)
-  ├─ parent_lookup: avg=0.006ms (2.2%)
-  ├─ sigma_detection: avg=0.003ms (2.0%)
-  ├─ process_tree_update: avg=0.003ms (1.6%)
-  ├─ event_counting: avg=0.000ms (0.2%)
-  ├─ filtering: avg=0.000ms (0.2%)
-  └─ info_enrichment: avg=0.000ms (0.1%)
-
-Tls_event Handler Timing Breakdown
-=====================================
-tls_event: avg=1.931ms (count=2)
-  ├─ create_basic_info: avg=0.708ms (36.7%)
-  ├─ console_logging: avg=0.156ms (6.6%)
-  ├─ parse_tls_data: avg=0.060ms (4.1%)
-  ├─ file_logging: avg=0.029ms (1.4%)
-  ├─ process_lookup: avg=0.001ms (0.0%)
-  └─ filtering: avg=0.000ms (0.0%)
+process_exec: avg=2.099ms (count=215)
+  Phase                Avg Time  Percentage  Count  
+  -----                --------  ----------  -----  
+  exec_wait            1.461ms   66.6%       215    
+  proc_check1          0.173ms   7.2%        215    
+  proc_check2          0.101ms   3.6%        215    
+  file_logging         0.067ms   2.5%        215    
+  process_enrichment   0.101ms   2.5%        215    
+  console_logging      0.055ms   2.5%        215    
+  cache_update         0.021ms   0.8%        215
 ```
+
+Each handler displays:
+
+- Average total execution time
+- Count of events processed
+- Breakdown of each processing phase with:
+
+-- Average time per phase
+-- Percentage of total handler time
+-- Number of times the phase was executed
+
+## Exclusion Statistics
+
+When run with the -exclusions flag, the tool provides detailed metrics about the exclusion engine:
+
+```
+Exclusion Statistics
+===================
+Total Exclusions: 77
+
+Exclusions by Type:
+  Rule Type  Pattern  Count  
+  ---------  -------  -----  
+  comm       bpfview  7      
+  comm       chronyd  70     
+
+Exclusion Latency Distribution (microseconds):
+  Range            Count  Histogram                                 
+  -----            -----  ---------                                 
+  64.00 - 128.00   1405   ████████████████████████████████████████  
+
+Latency Statistics:
+  ├─ Average: 1.737 μs
+  └─ Maximum: 512.000 μs
+
+Excluded Events by Size:
+  ├─ Average Size: 92 bytes
+  └─ Total Events: 77
+```
+
+This provides insights into:
+
+- Total number of excluded events
+- Breakdown by exclusion rule type and pattern
+- Latency distribution of exclusion checks
+- Visual histogram of exclusion performance
+- Size statistics of excluded events
+
+## General Statistics
+
+With the ```-all -exclusions``` flags, the tool also displays system-wide statistics:
+
+```
+General Statistics
+===================
+Total Events Processed:
+  ├─ network: 568
+  ├─ process: 1661
+  ├─ tls: 2
+  ├─ dns: 4
+  └─ Total: 2235
+
+Resource Usage:
+  ├─ Goroutines: 15
+  └─ Memory: 34.90 MB
+```
+
+## Use Cases
+
+- **Performance Optimization**: Identify which processing phases consume the most time
+- **Exclusion Tuning**: Validate that exclusion rules are working as expected
+- **Resource Monitoring**: Track event processing volume and memory usage
+- **Continuous Monitoring**: Use with -refresh for real-time performance visibility
+
+This tool helps understand BPFView's internal performance characteristics and optimize its configuration for specific environments.
