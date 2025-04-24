@@ -506,7 +506,7 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 
 	// Apply standard enrichment and finalization
 	timer.StartPhase("process_enrichment")
-	CompleteProcessInfo(info, types.ProcessLevelFull)
+	CompleteProcessInfo(info, globalProcessLevel)
 
 	// Add to process cache
 	timer.StartPhase("cache_update")
@@ -829,8 +829,14 @@ func findAndCacheParentProcess(ppid uint32) *types.ProcessInfo {
 			}
 		}
 
-		// Apply standard enrichment and finalization
-		CompleteProcessInfo(info, types.ProcessLevelBasic) // Get exe path and cmdline for parent matching
+		// Enrich and finalize
+
+		if globalProcessLevel == types.ProcessLevelMinimal {
+			CompleteProcessInfo(info, types.ProcessLevelMinimal)
+		} else {
+			// if we have collected basic or full, we only really need Full for parent process
+			CompleteProcessInfo(info, types.ProcessLevelBasic)
+		}
 		success := AddOrUpdateProcessCache(ppid, info)
 		if !success {
 			globalLogger.Debug("cache", "Failed to add PID %d to cache", ppid)
@@ -1209,7 +1215,7 @@ func initializeProcessCache() {
 
 			// Apply standard enrichment and finalization
 			timer.StartPhase("complete_info")
-			CompleteProcessInfo(info, types.ProcessLevelFull)
+			CompleteProcessInfo(info, globalProcessLevel)
 
 			timer.StartPhase("update_cache")
 			AddOrUpdateProcessCache(uint32(pid), info)
