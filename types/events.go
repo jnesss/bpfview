@@ -220,6 +220,7 @@ type UserSpaceTLSEvent struct {
 	KeyShareGroups    []uint16
 	ALPNValues        []string
 	Extensions        []uint16
+	SignatureAlgo	  []uint16
 	JA4               string
 	JA4Hash           string
 	IsQUIC            bool // Helper field to identify QUIC connections
