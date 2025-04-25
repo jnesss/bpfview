@@ -317,6 +317,80 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
             }
         }
     }
+    
+    // Calculate start position for remaining bytes
+    __u32 bytes_copied = event->data_len;
+    __u32 base_offset = payload_offset + bytes_copied;
+
+    // Try to copy a 32-byte chunk
+    if (base_offset + 32 <= skb->len && bytes_copied + 32 <= MAX_TLS_DATA) {
+        if (bpf_skb_load_bytes(skb, base_offset, stage->data, 32) == 0) {
+            #pragma unroll
+            for (int i = 0; i < 32; i++) {
+                event->data[bytes_copied + i] = stage->data[i];
+            }
+            bytes_copied += 32;
+            base_offset += 32;
+        }
+    }
+
+    // Try to copy a 16-byte chunk
+    if (base_offset + 16 <= skb->len && bytes_copied + 16 <= MAX_TLS_DATA) {
+        if (bpf_skb_load_bytes(skb, base_offset, stage->data, 16) == 0) {
+            #pragma unroll
+            for (int i = 0; i < 16; i++) {
+                event->data[bytes_copied + i] = stage->data[i];
+            }
+            bytes_copied += 16;
+            base_offset += 16;
+        }
+    }
+
+    // Try to copy an 8-byte chunk
+    if (base_offset + 8 <= skb->len && bytes_copied + 8 <= MAX_TLS_DATA) {
+        if (bpf_skb_load_bytes(skb, base_offset, stage->data, 8) == 0) {
+            #pragma unroll
+            for (int i = 0; i < 8; i++) {
+                event->data[bytes_copied + i] = stage->data[i];
+            }
+            bytes_copied += 8;
+            base_offset += 8;
+        }
+    }
+
+    // Try to copy a 4-byte chunk
+    if (base_offset + 4 <= skb->len && bytes_copied + 4 <= MAX_TLS_DATA) {
+        if (bpf_skb_load_bytes(skb, base_offset, stage->data, 4) == 0) {
+            #pragma unroll
+            for (int i = 0; i < 4; i++) {
+                event->data[bytes_copied + i] = stage->data[i];
+            }
+            bytes_copied += 4;
+            base_offset += 4;
+        }
+    }
+
+    // Try to copy a 2-byte chunk
+    if (base_offset + 2 <= skb->len && bytes_copied + 2 <= MAX_TLS_DATA) {
+        if (bpf_skb_load_bytes(skb, base_offset, stage->data, 2) == 0) {
+            event->data[bytes_copied] = stage->data[0];
+            event->data[bytes_copied + 1] = stage->data[1];
+            bytes_copied += 2;
+            base_offset += 2;
+        }
+    }
+
+    // Try to copy a final byte
+    if (base_offset + 1 <= skb->len && bytes_copied + 1 <= MAX_TLS_DATA) {
+        unsigned char byte;
+        if (bpf_skb_load_bytes(skb, base_offset, &byte, 1) == 0) {
+            event->data[bytes_copied] = byte;
+            bytes_copied += 1;
+        }
+    }
+
+    // Update the final data length
+    event->data_len = bytes_copied;
             
     // Reserve and copy to final event buffer
     struct tls_event *evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
