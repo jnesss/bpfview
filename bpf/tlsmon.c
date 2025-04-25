@@ -185,7 +185,7 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                 event->data[i] = stage->data[i];
             }
             event->data_len = CHUNK_SIZE;
-        
+
             // Chunk 2
             if (payload_offset + CHUNK_SIZE < skb->len &&
                 bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE, stage->data, CHUNK_SIZE) == 0) {
@@ -194,7 +194,7 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                     event->data[i + CHUNK_SIZE] = stage->data[i];
                 }
                 event->data_len = CHUNK_SIZE * 2;
-            
+
                 // Chunk 3
                 if (payload_offset + CHUNK_SIZE * 2 < skb->len &&
                     bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 2, stage->data, CHUNK_SIZE) == 0) {
@@ -203,7 +203,7 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                         event->data[i + CHUNK_SIZE * 2] = stage->data[i];
                     }
                     event->data_len = CHUNK_SIZE * 3;
-                
+
                     // Chunk 4
                     if (payload_offset + CHUNK_SIZE * 3 < skb->len &&
                         bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 3, stage->data, CHUNK_SIZE) == 0) {
@@ -212,7 +212,7 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                             event->data[i + CHUNK_SIZE * 3] = stage->data[i];
                         }
                         event->data_len = CHUNK_SIZE * 4;
-                    
+
                         // Chunk 5
                         if (payload_offset + CHUNK_SIZE * 4 < skb->len &&
                             bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 4, stage->data, CHUNK_SIZE) == 0) {
@@ -221,7 +221,7 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                                 event->data[i + CHUNK_SIZE * 4] = stage->data[i];
                             }
                             event->data_len = CHUNK_SIZE * 5;
-                        
+
                             // Chunk 6
                             if (payload_offset + CHUNK_SIZE * 5 < skb->len &&
                                 bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 5, stage->data, CHUNK_SIZE) == 0) {
@@ -230,7 +230,7 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                                     event->data[i + CHUNK_SIZE * 5] = stage->data[i];
                                 }
                                 event->data_len = CHUNK_SIZE * 6;
-                            
+
                                 // Chunk 7
                                 if (payload_offset + CHUNK_SIZE * 6 < skb->len &&
                                     bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 6, stage->data, CHUNK_SIZE) == 0) {
@@ -239,8 +239,8 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                                         event->data[i + CHUNK_SIZE * 6] = stage->data[i];
                                     }
                                     event->data_len = CHUNK_SIZE * 7;
-                                
-                                    // Chunk 8
+
+                                    // Chunk 8 - this is where the original implementation ended
                                     if (payload_offset + CHUNK_SIZE * 7 < skb->len &&
                                         bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 7, stage->data, CHUNK_SIZE) == 0) {
                                         #pragma unroll
@@ -248,6 +248,66 @@ static inline void process_tcp_tls(struct __sk_buff *skb, struct sock_info *info
                                             event->data[i + CHUNK_SIZE * 7] = stage->data[i];
                                         }
                                         event->data_len = CHUNK_SIZE * 8;
+
+                                        // Chunk 9
+                                        if (payload_offset + CHUNK_SIZE * 8 < skb->len &&
+                                            bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 8, stage->data, CHUNK_SIZE) == 0) {
+                                            #pragma unroll
+                                            for (int i = 0; i < CHUNK_SIZE; i++) {
+                                                event->data[i + CHUNK_SIZE * 8] = stage->data[i];
+                                            }
+                                            event->data_len = CHUNK_SIZE * 9;
+
+                                            // Chunk 10
+                                            if (payload_offset + CHUNK_SIZE * 9 < skb->len &&
+                                                bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 9, stage->data, CHUNK_SIZE) == 0) {
+                                                #pragma unroll
+                                                for (int i = 0; i < CHUNK_SIZE; i++) {
+                                                    event->data[i + CHUNK_SIZE * 9] = stage->data[i];
+                                                }
+                                                event->data_len = CHUNK_SIZE * 10;
+
+                                                // Chunk 11
+                                                if (payload_offset + CHUNK_SIZE * 10 < skb->len &&
+                                                    bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 10, stage->data, CHUNK_SIZE) == 0) {
+                                                    #pragma unroll
+                                                    for (int i = 0; i < CHUNK_SIZE; i++) {
+                                                        event->data[i + CHUNK_SIZE * 10] = stage->data[i];
+                                                    }
+                                                    event->data_len = CHUNK_SIZE * 11;
+
+                                                    // Chunk 12
+                                                    if (payload_offset + CHUNK_SIZE * 11 < skb->len &&
+                                                        bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 11, stage->data, CHUNK_SIZE) == 0) {
+                                                        #pragma unroll
+                                                        for (int i = 0; i < CHUNK_SIZE; i++) {
+                                                            event->data[i + CHUNK_SIZE * 11] = stage->data[i];
+                                                        }
+                                                        event->data_len = CHUNK_SIZE * 12;
+
+                                                        // Chunk 13
+                                                        if (payload_offset + CHUNK_SIZE * 12 < skb->len &&
+                                                            bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 12, stage->data, CHUNK_SIZE) == 0) {
+                                                            #pragma unroll
+                                                            for (int i = 0; i < CHUNK_SIZE; i++) {
+                                                                event->data[i + CHUNK_SIZE * 12] = stage->data[i];
+                                                            }
+                                                            event->data_len = CHUNK_SIZE * 13;
+
+                                                            // Chunk 14
+                                                            if (payload_offset + CHUNK_SIZE * 13 < skb->len &&
+                                                                bpf_skb_load_bytes(skb, payload_offset + CHUNK_SIZE * 13, stage->data, CHUNK_SIZE) == 0) {
+                                                                #pragma unroll
+                                                                for (int i = 0; i < CHUNK_SIZE; i++) {
+                                                                    event->data[i + CHUNK_SIZE * 13] = stage->data[i];
+                                                                }
+                                                                event->data_len = CHUNK_SIZE * 14;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
