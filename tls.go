@@ -142,6 +142,12 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 		userEvent.QUICVersion = event.Version
 	}
 
+	// Filter check before any logging
+	timer.StartPhase("filtering")
+	if globalEngine != nil && !globalEngine.matchTLS(&userEvent) {
+		return
+	}
+
 	globalLogger.Info("tls", "DataLen: %d, Protocol: %d", event.DataLen, event.Protocol)
 
 	// Parse TLS data if available
@@ -161,12 +167,6 @@ func handleTLSEvent(event *types.BPFTLSEvent) {
 			// QUIC processing
 			parseQUICTLS(event.Data[:actualDataLen], &userEvent)
 		}
-	}
-
-	// Filter check before any logging
-	timer.StartPhase("filtering")
-	if globalEngine != nil && !globalEngine.matchTLS(&userEvent) {
-		return
 	}
 
 	// Print the event
