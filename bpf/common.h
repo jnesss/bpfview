@@ -6,7 +6,7 @@
 #include <bpf/bpf_endian.h>
 
 #define TASK_COMM_LEN 16
-#define MAX_TLS_DATA 512 
+#define MAX_TLS_DATA 896 
 #define MAX_ENTRIES 8192
 #define ALLOW_PKT 1
 #define ALLOW_SK 1

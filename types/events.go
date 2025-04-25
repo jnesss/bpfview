@@ -127,7 +127,7 @@ type BPFTLSEvent struct {
 	SPort           uint16
 	DPort           uint16
 	DataLen         uint16
-	Data            [512]byte
+	Data            [896]byte
 }
 
 // EventHeader is used for event type routing
