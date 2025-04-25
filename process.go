@@ -171,7 +171,7 @@ func handleProcessExitEvent(event *types.ProcessEvent) {
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
-		excludedEventsTotal.WithLabelValues("process_exit").Inc()
+		excludedEventsTotal.WithLabelValues("process_exit", "", "").Inc()
 		timer.EndTiming()
 		return
 	}
@@ -353,7 +353,7 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
-		excludedEventsTotal.WithLabelValues("process_fork").Inc()
+		excludedEventsTotal.WithLabelValues("process_fork", "", "").Inc()
 		return
 	}
 
@@ -520,7 +520,7 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 	// Filter check AFTER enrichment and cache updates, but BEFORE logging
 	timer.StartPhase("filtering")
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
-		excludedEventsTotal.WithLabelValues("process_exec").Inc()
+		excludedEventsTotal.WithLabelValues("process_exec", "", "").Inc()
 		return
 	}
 
