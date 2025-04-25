@@ -761,7 +761,7 @@ timestamp|session_uid|process_uid|network_uid|community_id|dns_conversation_uid|
 ```
 # TLS handshake details including cipher suites, supported groups, and JA4 fingerprint
 timestamp|session_uid|process_uid|network_uid|community_id|pid|comm|ppid|parent_comm|src_ip|src_port|dst_ip|dst_port|version|sni|cipher_suites|supported_groups|handshake_length|ja4|ja4_hash
-2025-04-15T20:21:13.940716292Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|172.31.44.65|37176|23.202.93.28|443|TLS 1.0|www.apple.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xcca9,0xcca8,0xc0ad,0xc02b|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|q0t1dapplez508ahttp2c1302|aeb3f012e851713acbf3b08b0cee2eba
+2025-04-15T20:21:13.940716292Z|9cf3844b|7df935f6|fdaa795fe689e39d|1:6pJiG+rf3CQf7TqoqzIcjZHQwWk=|324614|curl|311463|bash|172.31.44.65|37176|23.202.93.28|443|TLS 1.0|www.apple.com|0x1302,0x1303,0x1301,0x1304,0xc02c,0xc030,0xcca9,0xcca8,0xc0ad,0xc02b|x25519,secp256r1,x448,secp521r1,secp384r1,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192|508|t13d3612h2_018971650b2c_89b78339ac4c|aeb3f012e851713acbf3b08b0cee2eba
 ```
 
 #### Sigma Events (sigma.log)
@@ -1090,7 +1090,7 @@ Example GELF output:
   "short_message": "TLS handshake: www.example.com (TLS 1.2)",
   "timestamp": 1744749387.189833,
   "level": 6,
-  "full_message": "TLS handshake: www.example.com (TLS 1.2)\n\nTLS Details:\nVersion: TLS 1.2\nServer Name: www.example.com\n\nSupported Cipher Suites:\n  1. 0x1302\n  2. 0x1303\n  3. 0x1301\n  4. 0x1304\n  5. 0xc030\n  6. 0xcca8\n  7. 0xc014\n  8. 0xc02f\n  9. 0xc013\n  10. 0xc02c\n\nFingerprinting:\n  JA4: q0t3dexamplez508a_c1302\n  JA4 Hash: 66c38d1d91e43ce4fc953cd3dae25f9b\n\nProcess Details:\nProcess: wget (PID: 325489)\nParent: bash (PPID: 311463)\n\nConnection Details:\nSource: 172.31.44.65:36316\nDestination: 23.55.220.147:443\n",
+  "full_message": "TLS handshake: www.example.com (TLS 1.2)\n\nTLS Details:\nVersion: TLS 1.2\nServer Name: www.example.com\n\nSupported Cipher Suites:\n  1. 0x1302\n  2. 0x1303\n  3. 0x1301\n  4. 0x1304\n  5. 0xc030\n  6. 0xcca8\n  7. 0xc014\n  8. 0xc02f\n  9. 0xc013\n  10. 0xc02c\n\nFingerprinting:\n  JA4: t13d3612h2_018971650b2c_89b78339ac4c\n  JA4 Hash: 66c38d1d91e43ce4fc953cd3dae25f9b\n\nProcess Details:\nProcess: wget (PID: 325489)\nParent: bash (PPID: 311463)\n\nConnection Details:\nSource: 172.31.44.65:36316\nDestination: 23.55.220.147:443\n",
   "_rule_id": "",
   "_rule_name": "",
   "_rule_level": "",
@@ -1127,7 +1127,7 @@ Example GELF output:
     "0xc013",
     "0xc02c"
   ],
-  "_tls_ja4": "q0t3dexamplez508a_c1302",
+  "_tls_ja4": "t13d3612h2_018971650b2c_89b78339ac4c",
   "_tls_ja4_hash": "66c38d1d91e43ce4fc953cd3dae25f9b"
 }
 ```
