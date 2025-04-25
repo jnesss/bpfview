@@ -473,7 +473,7 @@ func (f *TextFormatter) FormatTLS(event *types.UserSpaceTLSEvent, info *types.Pr
 		ja4hash = event.JA4Hash
 	}
 
-	_, err := fmt.Fprintf(f.tlsLog, "%s|%s|%s|%s|%d|%s|%d|%s|%s|%d|%s|%d|%s|%s|%s|%s|%d|%s|%s\n",
+	_, err := fmt.Fprintf(f.tlsLog, "%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|%d|%s|%d|%s|%s|%s|%s|%d|%s|%s\n",
 		timestamp.Format(time.RFC3339Nano),
 		f.sessionUID,
 		processUID,
