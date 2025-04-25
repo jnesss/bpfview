@@ -11,6 +11,156 @@ import (
 	"github.com/jnesss/bpfview/types"
 )
 
+// Extract Extensions values
+func extractExtensions(data []byte) ([]uint16) {
+	extensions := []uint16{}
+
+	//probably should do an endian test and determine which instead of just assuming big endian here.
+	//little endian
+	//helloLen := int(uint(data[6]) | uint(data[7])<<8 | uint(data[8])<<16)
+
+	//big endian
+	handshakeLen := int(uint(data[4]) | uint(data[3])<<8)
+
+	if handshakeLen > 512 {
+		return extensions
+	}
+
+        if len(data) < 43 {
+                return extensions
+        }
+
+        offset := 9  // Skip headers
+        offset += 34 // Skip version and random
+
+        if offset+1 > len(data) {
+                return extensions
+        }
+
+        // Skip session ID
+        sessionIDLen := int(data[offset])
+        offset += 1 + sessionIDLen
+
+        if offset+2 > len(data) {
+                return extensions
+        }
+
+        // Skip cipher suites
+        cipherSuitesLen := int(data[offset])<<8 | int(data[offset+1])
+        offset += 2 + cipherSuitesLen
+
+        if offset+1 > len(data) {
+                return extensions
+        }
+
+        // Skip compression methods
+        compressionMethodsLen := int(data[offset])
+        offset += 1 + compressionMethodsLen
+
+        if offset+2 > len(data) {
+                return extensions
+        }
+
+        // Process extensions
+        extensionsLen := int(data[offset])<<8 | int(data[offset+1])
+        offset += 2
+
+        extensionsEnd := offset + extensionsLen
+        if extensionsEnd > len(data) {
+                extensionsEnd = len(data)
+        }
+
+	
+        for offset+4 <= extensionsEnd {
+                extType := uint16(data[offset])<<8 | uint16(data[offset+1])
+                extLen := int(data[offset+2])<<8 | int(data[offset+3])
+                offset += 4
+		offset += extLen
+
+		extensions = append(extensions, extType)
+	}
+
+	return extensions
+
+}
+
+
+// Extract signature algorithms from extensions
+func extractSignatureAlgorithms(data []byte) []uint16 {
+	sigs := []uint16{}
+
+	if len(data) < 43 {
+		return sigs
+	}
+
+	offset := 9  // Skip headers
+	offset += 34 // Skip version and random
+
+	if offset+1 > len(data) {
+		return sigs
+	}
+
+	// Skip session ID
+	sessionIDLen := int(data[offset])
+	offset += 1 + sessionIDLen
+
+	if offset+2 > len(data) {
+		return sigs
+	}
+
+	// Skip cipher suites
+	cipherSuitesLen := int(data[offset])<<8 | int(data[offset+1])
+	offset += 2 + cipherSuitesLen
+
+	if offset+1 > len(data) {
+		return sigs
+	}
+
+	// Skip compression methods
+	compressionMethodsLen := int(data[offset])
+	offset += 1 + compressionMethodsLen
+
+	if offset+2 > len(data) {
+		return sigs
+	}
+
+	// Process extensions
+	extensionsLen := int(data[offset])<<8 | int(data[offset+1])
+	offset += 2
+
+	extensionsEnd := offset + extensionsLen
+	if extensionsEnd > len(data) {
+		extensionsEnd = len(data)
+	}
+
+	// Search for signature algorithms extension (type 0x000d)
+	for offset+4 <= extensionsEnd {
+		extType := int(data[offset])<<8 | int(data[offset+1])
+		extLen := int(data[offset+2])<<8 | int(data[offset+3])
+		offset += 4
+
+		if extType == 0x000d && offset+2 <= extensionsEnd {
+			sigLen := int(data[offset])<<8 | int(data[offset+1])
+			offset += 2
+
+			sigEnd := offset + sigLen
+			if sigEnd > extensionsEnd {
+				sigEnd = extensionsEnd
+			}
+
+			for offset+2 <= sigEnd {
+				sig := uint16(data[offset])<<8 | uint16(data[offset+1])
+				sigs = append(sigs, sig)
+				offset += 2
+			}
+			return sigs
+		}
+		offset += extLen
+	}
+	return sigs
+}
+
+
 // Extract ALPN values from the alpn extension
 func extractALPN(data []byte) []string {
 	alpnValues := []string{}
@@ -114,12 +264,12 @@ func isGREASE(value uint16) bool {
 	return (value&0x0f0f) == 0x0a0a && ((value>>4)&0x0f) == (value>>12)
 }
 
-// Remove GREASE values from cipher suites
-func removeGREASE(cipherSuites []uint16) []uint16 {
-	result := make([]uint16, 0, len(cipherSuites))
-	for _, cipher := range cipherSuites {
-		if !isGREASE(cipher) {
-			result = append(result, cipher)
+// Remove GREASE values
+func removeGREASE(data []uint16) []uint16 {
+	result := make([]uint16, 0, len(data))
+	for _, d := range data {
+		if !isGREASE(d) {
+			result = append(result, d)
 		}
 	}
 	return result
@@ -171,62 +321,59 @@ func findLargest(numbers []uint16) uint16 {
 
 // CalculateJA4 generates a JA4 fingerprint from a TLS ClientHello
 func CalculateJA4(event *types.UserSpaceTLSEvent) string {
+
+	ja4 := ""
+
 	// Only calculate for ClientHello
 	if event.HandshakeType != 0x01 {
 		return ""
 	}
 
-	// q: QUIC transport
-        // t: TCP transport
-	protocol := ""
-	if event.Protocol == 6 {
-		protocol = "t"
-	} else if event.IsQUIC {
-		protocol = "q"
-	}
+        // Number of Extensions
+        extCount := getExtensionsCount(event.Extensions)
 
-	//TLS Version of the Hello Handshake used initially, unless there is a supported version we can use
-        tlsVer := CalculateTLSVersion(event.TLSVersion)
-	if len(event.SupportedVersions) > 0 {
-		tlsVer = CalculateTLSVersion(findLargest(event.SupportedVersions))
-	}
-
-	// d: SNI domain component, we return either 'i' if there is no SNI, or 'd' if there is a second-level domain
-        sni := "i"
-	if event.SNI != "" {
-		// as we don't really care what this value is, besides that there is one
-		// we may be able to just short circuit this?
-		parts := strings.Split(event.SNI, ".")
-		if len(parts) >= 2 {
-			// domain = parts[len(parts)-2]
-			sni = "d"
+	if extCount != "00" {
+		// q: QUIC transport
+        	// t: TCP transport
+		protocol := ""
+		if event.Protocol == 6 {
+			protocol = "t"
+		} else if event.IsQUIC {
+			protocol = "q"
 		}
+
+		//TLS Version of the Hello Handshake used initially, unless there is a supported version we can use
+        	tlsVer := CalculateTLSVersion(event.TLSVersion)
+		if len(event.SupportedVersions) > 0 {
+			tlsVer = CalculateTLSVersion(findLargest(event.SupportedVersions))
+		}
+
+		// d: SNI domain component, we return either 'i' if there is no SNI, or 'd' if there is a second-level domain
+	        sni := "i"
+		if event.SNI != "" {
+			// as we don't really care what this value is, besides that there is one
+			// we may be able to just short circuit this?
+			parts := strings.Split(event.SNI, ".")
+			if len(parts) >= 2 {
+				// domain = parts[len(parts)-2]
+				sni = "d"
+			}
+		}
+
+		// a: ALPN
+		alpn := formatALPN(event.ALPNValues)
+
+		// c: Cipher suites
+		cipherHash := getCipherHash(event.CipherSuites)
+		cipherCount := getCipherCount(event.CipherSuites)
+
+		// Construct JA4
+		ja4_a := fmt.Sprintf("%s%s%s%s%s%s", protocol, tlsVer, sni, cipherCount, extCount, alpn)
+		ja4_b := cipherHash
+	        sigs := getSigs(event.SignatureAlgo)
+		ja4_c := getExtensionHash(event.Extensions, sigs)
+		ja4 = fmt.Sprintf("%s_%s_%s", ja4_a, ja4_b, ja4_c)
 	}
-
-	// a: ALPN
-	alpn := formatALPN(event.ALPNValues)
-
-
-	// c: Cipher suites
-	cipherHash := getCipherHash(event.CipherSuites)
-	cipherCount := getCipherCount(event.CipherSuites)
-
-	// Number of Extensions
-	// need something like event.Extensions to parse and count.
-	extCount := "00"
-
-	// Construct JA4
-	ja4_a := fmt.Sprintf("%s%s%s%s%s%s",
-		protocol, tlsVer, sni, cipherCount, extCount, alpn)
-
-	ja4_b := cipherHash
-
-	//truncated SHA256 hash of the extensions, sorted
-	// need something like event.Extensions to calculate
-
-	ja4_c := ""
-
-	ja4 := fmt.Sprintf("%s_%s_%s", ja4_a, ja4_b, ja4_c)
 
 	return ja4
 }
@@ -240,6 +387,33 @@ func CalculateSHA256Hash(value string) string {
 	return fmt.Sprintf("%x", hash)
 }
 
+
+
+// Get Signature Algorithms from Extensions
+func getSigs(sigs []uint16) string {
+        if len(sigs) == 0 {
+                return ""
+        }
+
+	hexSigs := ""
+        for _, number := range sigs {
+		hexSigs = hexSigs + fmt.Sprintf("%04x", number) + ","
+        }
+        hexSigs = hexSigs[:len(hexSigs)-1]
+	return hexSigs
+}
+
+// Get the JA4 extension count
+func getExtensionsCount(Extensions []uint16) string {
+        // Remove GREASE values
+        filteredExtensions := removeGREASE(Extensions)
+
+        if len(filteredExtensions) == 0 {
+                return fmt.Sprintf("%02x", 0)
+        }
+        return strconv.Itoa(len(filteredExtensions))
+}
+
 // Get the JA4 cipher count
 func getCipherCount(cipherSuites []uint16) string {
         // Remove GREASE values
@@ -249,6 +423,40 @@ func getCipherCount(cipherSuites []uint16) string {
                 return fmt.Sprintf("%02x", 0)
         }
         return strconv.Itoa(len(filteredCiphers))
+}
+
+// Get the JA4 extension Hash
+func getExtensionHash(extensions []uint16, sigs string) string {
+        // Remove GREASE values
+        filteredExtensions := removeGREASE(extensions)
+
+        if len(filteredExtensions) == 0 {
+                return "000000000000"
+        }
+
+        //sort unint16 list
+        sort.Slice(filteredExtensions, func(i,j int) bool {
+                return filteredExtensions[i] < filteredExtensions[j]
+        })
+
+        //convert each value to hex
+        hexFilteredExtensions := ""
+
+        for _, number := range filteredExtensions {
+		hexNumber := fmt.Sprintf("%04x", number)
+		if hexNumber != "0000" && hexNumber != "0010" {
+	                hexFilteredExtensions = hexFilteredExtensions + fmt.Sprintf("%04x", number) + ","
+		}
+        }
+        hexFilteredExtensions = hexFilteredExtensions[:len(hexFilteredExtensions)-1]
+
+	hash := CalculateSHA256Hash(hexFilteredExtensions)
+	if len(sigs) > 0 {
+		hash = CalculateSHA256Hash(hexFilteredExtensions + "_" + sigs)
+	}
+
+        // Return just the first 12 characters
+        return hash[:12]
 }
 
 

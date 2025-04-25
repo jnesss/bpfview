@@ -265,6 +265,8 @@ func parseTCPTLS(data []byte, userEvent *types.UserSpaceTLSEvent) {
 		userEvent.SupportedGroups = extractSupportedGroups(data)
 		userEvent.KeyShareGroups = extractKeyShareGroups(data)
 		userEvent.ALPNValues = extractALPN(data)
+		userEvent.Extensions = extractExtensions(data)
+		userEvent.SignatureAlgo = extractSignatureAlgorithms(data)
 	}
 
 	if userEvent.HandshakeType == 0x01 {
