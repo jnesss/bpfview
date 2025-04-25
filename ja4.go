@@ -17,11 +17,12 @@ func extractExtensions(data []byte) ([]uint16) {
 
 	//probably should do an endian test and determine which instead of just assuming big endian here.
 	//little endian
-	//helloLen := int(uint(data[6]) | uint(data[7])<<8 | uint(data[8])<<16)
+	//handshakeLen := int(uint(data[4]) | uint(data[3])<<8)
 
 	//big endian
 	handshakeLen := int(uint(data[4]) | uint(data[3])<<8)
 
+	//this is a bit of a hack due to limited data coming in from ebpf, we don't get full TLS packet, currently only 512
 	if handshakeLen > 512 {
 		return extensions
 	}
@@ -70,7 +71,6 @@ func extractExtensions(data []byte) ([]uint16) {
                 extensionsEnd = len(data)
         }
 
-	
         for offset+4 <= extensionsEnd {
                 extType := uint16(data[offset])<<8 | uint16(data[offset+1])
                 extLen := int(data[offset+2])<<8 | int(data[offset+3])
