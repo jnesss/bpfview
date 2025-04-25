@@ -313,12 +313,6 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 		time.Sleep(delay)
 	}
 
-	// If we still failed, log diagnostic info
-	if !parentExists {
-		globalLogger.Info("process", "Failed to find parent after all attempts: "+
-			"Child PID=%d comm=%s, Parent PID=%d", event.Pid, info.Comm, event.Ppid)
-	}
-
 	timer.StartPhase("event_counting")
 	eventCounter.WithLabelValues("process").Inc()
 
@@ -355,6 +349,12 @@ func handleProcessForkEvent(event *types.ProcessEvent) {
 	if globalEngine != nil && !globalEngine.ShouldLog(info) {
 		excludedEventsTotal.WithLabelValues("process_fork", "", "").Inc()
 		return
+	}
+
+	// If we still failed, log diagnostic info
+	if !parentExists {
+		globalLogger.Debug("process", "Failed to find parent after all attempts: "+
+			"Child PID=%d comm=%s, Parent PID=%d", event.Pid, info.Comm, event.Ppid)
 	}
 
 	// Log to console with enhanced information
