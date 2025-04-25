@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/jnesss/bpfview/types"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 type FilterConfig struct {
@@ -219,33 +217,25 @@ func (e *FilterEngine) ShouldLog(event interface{}) bool {
 	case *types.ProcessInfo:
 		matched := e.matchProcess(evt)
 		if !matched {
-			excludedEventsTotal.With(prometheus.Labels{
-				"filter_type": "process",
-			}).Inc()
+			excludedEventsTotal.WithLabelValues("process", "", "").Inc()
 		}
 		return matched
 	case *types.NetworkEvent:
 		matched := e.matchNetwork(evt)
 		if !matched {
-			excludedEventsTotal.With(prometheus.Labels{
-				"filter_type": "network",
-			}).Inc()
+			excludedEventsTotal.WithLabelValues("network", "", "").Inc()
 		}
 		return matched
 	case *types.UserSpaceDNSEvent:
 		matched := e.matchDNS(evt)
 		if !matched {
-			excludedEventsTotal.With(prometheus.Labels{
-				"filter_type": "dns",
-			}).Inc()
+			excludedEventsTotal.WithLabelValues("dns", "", "").Inc()
 		}
 		return matched
 	case *types.UserSpaceTLSEvent:
 		matched := e.matchTLS(evt)
 		if !matched {
-			excludedEventsTotal.With(prometheus.Labels{
-				"filter_type": "tls",
-			}).Inc()
+			excludedEventsTotal.WithLabelValues("tls", "", "").Inc()
 		}
 		return matched
 	default:
