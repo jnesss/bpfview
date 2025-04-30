@@ -87,6 +87,16 @@ In large-scale deployments, this fingerprinting system dramatically reduces stor
 
 For common processes executed thousands or millions of times (e.g., system services, scheduled tasks), this can reduce storage by 99%+ while preserving analytical capabilities.
 
+```
+$ sqlite3 bpfview.db 
+SQLite version 3.40.0 2023-06-02 12:56:32
+Enter ".help" for usage hints.
+sqlite> select count(*) from processes;
+6678
+sqlite> select count(distinct(fingerprint)) from processes;
+122
+```
+
 ### Pattern Detection
 
 The fingerprinting system enables efficient pattern detection for security monitoring:
