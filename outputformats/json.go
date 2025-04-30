@@ -28,13 +28,14 @@ type HostInfo struct {
 
 // Event-specific structures that will be serialized to JSON
 type ProcessJSON struct {
-	Timestamp  string    `json:"timestamp"`
-	SessionUID string    `json:"session_uid"`
-	Host       *HostInfo `json:"host,omitempty"`
-	EventType  string    `json:"event_type"`
-	ProcessUID string    `json:"process_uid"`
-	ParentUID  string    `json:"parent_uid,omitempty"`
-	Process    struct {
+	Timestamp   string    `json:"timestamp"`
+	SessionUID  string    `json:"session_uid"`
+	Host        *HostInfo `json:"host,omitempty"`
+	EventType   string    `json:"event_type"`
+	ProcessUID  string    `json:"process_uid"`
+	ParentUID   string    `json:"parent_uid,omitempty"`
+	Fingerprint string    `json:"fingerprint,omitempty"`
+	Process     struct {
 		PID             uint32 `json:"pid"`
 		Comm            string `json:"comm"`
 		PPID            uint32 `json:"ppid"`
@@ -253,6 +254,14 @@ func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		SessionUID: f.sessionUID,
 		EventType:  eventTypeString(event.EventType),
 		ProcessUID: info.ProcessUID,
+	}
+
+	if info.Fingerprint != "" {
+		if info.ParentFingerprint != "" {
+			jsonEvent.Fingerprint = fmt.Sprintf("%v_%v", info.Fingerprint, info.ParentFingerprint)
+		} else {
+			jsonEvent.Fingerprint = info.Fingerprint
+		}
 	}
 
 	// Add host info if enabled

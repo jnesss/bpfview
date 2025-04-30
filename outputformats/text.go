@@ -149,7 +149,7 @@ func (f *TextFormatter) Close() error {
 }
 
 func (f *TextFormatter) writeProcessHeader() {
-	fmt.Fprintln(f.processLog, "timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|binary_hash|cmdline|username|container_id|cwd|start_time|exit_time|exit_code|duration")
+	fmt.Fprintln(f.processLog, "timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|binary_hash|cmdline|username|container_id|cwd|start_time|fingerprint|exit_time|exit_code|duration")
 }
 
 func (f *TextFormatter) writeNetworkHeader() {
@@ -245,7 +245,8 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 	comm := cleanField(info.Comm, "-")
 	parentComm := cleanField(string(bytes.TrimRight(event.ParentComm[:], "\x00")), "-")
 	exePath := cleanField(info.ExePath, "-")
-	cmdline := cleanField(info.CmdLine, "-")
+	cmdline := strings.ReplaceAll(cleanField(info.CmdLine, "-"), "|", "(PIPE)")
+
 	username := cleanField(info.Username, "-")
 	containerID := cleanField(info.ContainerID, "-")
 	cwd := cleanField(info.WorkingDir, "-")
@@ -269,7 +270,16 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 
 	binaryHash := cleanField(info.BinaryHash, "-")
 
-	_, err := fmt.Fprintf(f.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+	fingerprint := "-"
+	if info.Fingerprint != "" {
+		if info.ParentFingerprint != "" {
+			fingerprint = fmt.Sprintf("%v_%v", info.Fingerprint, info.ParentFingerprint)
+		} else {
+			fingerprint = info.Fingerprint
+		}
+	}
+
+	_, err := fmt.Fprintf(f.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
 		event_timeStr, // Event timestamp
 		f.sessionUID,  // Session identifier
 		eventUID,      // Enhanced UID
@@ -287,6 +297,7 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		containerID,  // Container ID if available
 		cwd,          // Current Working Directory
 		startTimeStr, // Start time
+		fingerprint,  // Process Fingerprint_Parent Fingerprint
 		exitTimeStr,  // Exit time
 		exitcode,     // Exit code
 		duration,     // Process duration

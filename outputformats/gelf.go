@@ -47,6 +47,7 @@ type gelfMessage struct {
 	EventCategory  string `json:"_event_category"` // General: process, network
 	SessionUID     string `json:"_session_uid"`
 	ProcessUID     string `json:"_process_uid,omitempty"`
+	Fingerprint    string `json:"_process_fingerprint,omitempty"`
 	NetworkUID     string `json:"_network_uid,omitempty"`
 	ConversationID string `json:"_conversation_id,omitempty"`
 	CommunityID    string `json:"_community_id,omitempty"`
@@ -136,6 +137,14 @@ func (f *GELFFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		TimestampHuman: BpfTimestampToTime(event.Timestamp).UTC().Format(time.RFC3339Nano),
 		EventCategory:  "process",
 		ProcessUID:     info.ProcessUID,
+	}
+
+	if info.Fingerprint != "" {
+		if info.ParentFingerprint != "" {
+			msg.Fingerprint = fmt.Sprintf("%v_%v", info.Fingerprint, info.ParentFingerprint)
+		} else {
+			msg.Fingerprint = info.Fingerprint
+		}
 	}
 
 	// Set session info
