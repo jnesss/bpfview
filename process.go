@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jnesss/bpfview/fingerprint"
 	"github.com/jnesss/bpfview/types"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -567,6 +568,19 @@ func handleProcessExecEvent(event *types.ProcessEvent, bpfObjs *execveObjects) {
 		}
 	}
 
+	// After parent lookup in handleProcessExecEvent
+	if parentinfo != nil && parentinfo.Fingerprint != "" {
+		// Store parent fingerprint
+		info.ParentFingerprint = parentinfo.Fingerprint
+
+		// Create or update process's own fingerprint
+		pattern := fingerprint.NewProcessPattern(info, parentinfo)
+		info.Fingerprint = pattern.GenerateFingerprint()
+
+		// Update cache with new fingerprint
+		AddOrUpdateProcessCache(event.Pid, info)
+	}
+
 	// Log to file with proper structured format if logger is available
 	timer.StartPhase("file_logging")
 	if globalLogger != nil {
@@ -787,6 +801,16 @@ func InheritFromParent(info, parentInfo *types.ProcessInfo) {
 	info.Environment = parentInfo.Environment
 	info.ParentComm = parentInfo.Comm
 
+	// Set up for parent-aware fingerprint
+	if parentInfo.Fingerprint != "" {
+		// Store parent fingerprint
+		info.ParentFingerprint = parentInfo.Fingerprint
+
+		// Create process's own fingerprint
+		pattern := fingerprint.NewProcessPattern(info, parentInfo)
+		info.Fingerprint = pattern.GenerateFingerprint()
+	}
+
 	// Use parent's values only if child doesn't have them
 	if info.UID == 0 && parentInfo.UID != 0 {
 		info.UID = parentInfo.UID
@@ -954,6 +978,12 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 			h.Write([]byte(info.ExePath))
 		}
 		info.ProcessUID = fmt.Sprintf("%x", h.Sum32())
+	}
+
+	// Generate process fingerprint
+	if info.Fingerprint == "" {
+		pattern := fingerprint.NewProcessPattern(info, nil)
+		info.Fingerprint = pattern.GenerateFingerprint()
 	}
 }
 
