@@ -1,2 +1,4 @@
 github.com/jnesss/bpfview/types v0.0.0-20250410184514-307cf1204dd8 h1:ZTHHJ5rlwErlj/EvkSQgpfRpDJAAM+H2izIaoJgJFdg=
 github.com/jnesss/bpfview/types v0.0.0-20250410184514-307cf1204dd8/go.mod h1:jItmOCpiPJZHC36V5XLFiEUQtT4p/EUUiU0gj9Q/kQU=
+github.com/mattn/go-sqlite3 v1.14.28 h1:ThEiQrnbtumT+QMknw63Befp/ce/nUPgBPMlRFEum7A=
+github.com/mattn/go-sqlite3 v1.14.28/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=

@@ -245,10 +245,20 @@ func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.Proc
 		}
 	}
 
+	var fingerprint string
+	if info.Fingerprint != "" {
+		if info.ParentFingerprint != "" {
+			fingerprint = fmt.Sprintf("%v_%v", info.Fingerprint, info.ParentFingerprint)
+		} else {
+			fingerprint = info.Fingerprint
+		}
+	}
+
 	// Correlation IDs
 	ecsEvent.Labels = map[string]string{
 		"session_uid": f.sessionUID,
 		"process_uid": info.ProcessUID,
+		"fingerprint": fingerprint,
 	}
 
 	return f.encoder.Encode(ecsEvent)

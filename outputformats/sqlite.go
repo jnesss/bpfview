@@ -66,6 +66,7 @@ func initSchema(db *sql.DB) error {
 		session_uid TEXT NOT NULL,
 		process_uid TEXT NOT NULL,
         event_type TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
 		parent_uid TEXT,
 		timestamp DATETIME NOT NULL,
 		pid INTEGER NOT NULL,
@@ -257,15 +258,24 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 		return err
 	}
 
+	var fingerprint string
+	if info.Fingerprint != "" {
+		if info.ParentFingerprint != "" {
+			fingerprint = fmt.Sprintf("%v_%v", info.Fingerprint, info.ParentFingerprint)
+		} else {
+			fingerprint = info.Fingerprint
+		}
+	}
+
 	// if eventType == "exec" || eventType == "fork"
 	_, err := f.db.Exec(`
             INSERT INTO processes (
-                session_uid, process_uid, parent_uid, event_type, timestamp, 
+                session_uid, process_uid, parent_uid, event_type, timestamp, fingerprint,
                 pid, ppid, comm, cmdline, exe_path, working_dir, username, 
                 parent_comm, container_id, uid, gid, binary_hash,
                 exit_code, exit_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, parentInfo.ProcessUID, eventType, BpfTimestampToTime(event.Timestamp),
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.sessionUID, info.ProcessUID, parentInfo.ProcessUID, eventType, BpfTimestampToTime(event.Timestamp), fingerprint,
 		info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
 		info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash, nil, nil)
 	if err != nil {
