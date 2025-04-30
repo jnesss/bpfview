@@ -139,24 +139,26 @@ type EventHeader struct {
 
 // ProcessInfo represents enriched process information
 type ProcessInfo struct {
-	PID         uint32
-	PPID        uint32
-	Comm        string
-	ParentComm  string
-	ExePath     string
-	CmdLine     string
-	WorkingDir  string
-	Environment []string
-	UID         uint32
-	GID         uint32
-	Username    string
-	ContainerID string
-	StartTime   time.Time
-	ExitTime    time.Time
-	ExitCode    uint32
-	BinaryHash  string
-	ProcessUID  string
-	EventType   string // "fork", "exec", or "exit" for identification and output formatting
+	PID               uint32
+	PPID              uint32
+	Comm              string
+	ParentComm        string
+	ExePath           string
+	CmdLine           string
+	WorkingDir        string
+	Environment       []string
+	UID               uint32
+	GID               uint32
+	Username          string
+	ContainerID       string
+	StartTime         time.Time
+	ExitTime          time.Time
+	ExitCode          uint32
+	BinaryHash        string
+	ProcessUID        string
+	EventType         string // "fork", "exec", or "exit" for identification and output formatting
+	Fingerprint       string // Process's own fingerprint
+	ParentFingerprint string // Immediate parent's fingerprint
 }
 
 // DNS event structures
@@ -220,7 +222,7 @@ type UserSpaceTLSEvent struct {
 	KeyShareGroups    []uint16
 	ALPNValues        []string
 	Extensions        []uint16
-	SignatureAlgo	  []uint16
+	SignatureAlgo     []uint16
 	JA4               string
 	JA4Hash           string
 	IsQUIC            bool // Helper field to identify QUIC connections
