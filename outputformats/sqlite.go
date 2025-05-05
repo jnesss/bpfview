@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/tursodatabase/limbo"
 
 	"github.com/jnesss/bpfview/types"
 )
@@ -36,11 +36,11 @@ func NewSQLiteFormatter(dbPath string, hostname, hostIP, sessionUID string, enab
 		return nil, fmt.Errorf("failed to open database: %v", err)
 	}
 
-	// Enable WAL mode for better concurrency
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable WAL mode: %v", err)
-	}
+	// Limbo does not require WAL mode set
+	//if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	//	db.Close()
+	//	return nil, fmt.Errorf("failed to enable WAL mode: %v", err)
+	//}
 
 	// Initialize schema
 	if err := initSchema(db); err != nil {
@@ -59,164 +59,123 @@ func NewSQLiteFormatter(dbPath string, hostname, hostIP, sessionUID string, enab
 
 // Initialize schema
 func initSchema(db *sql.DB) error {
-	schema := `
-	-- Process events
-	CREATE TABLE IF NOT EXISTS processes (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session_uid TEXT NOT NULL,
-		process_uid TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        fingerprint TEXT NOT NULL,
-		parent_uid TEXT,
-		timestamp DATETIME NOT NULL,
-		pid INTEGER NOT NULL,
-		ppid INTEGER NOT NULL,
-		comm TEXT NOT NULL,
-		cmdline TEXT,
-		exe_path TEXT,
-		working_dir TEXT,
-		username TEXT,
-		parent_comm TEXT,
-		container_id TEXT,
-		uid INTEGER,
-		gid INTEGER,
-		binary_hash TEXT,
-		environment TEXT,
-		exit_code INTEGER,
-		exit_time DATETIME,
-		cpu_usage REAL,
-		memory_usage INTEGER,
-		memory_percent REAL,
-		thread_count INTEGER
-	);
+	// Create tables separately with error checking
+	tables := []string{
+		`CREATE TABLE IF NOT EXISTS processes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_uid TEXT NOT NULL,
+			process_uid TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			parent_uid TEXT,
+			timestamp DATETIME NOT NULL,
+			pid INTEGER NOT NULL,
+			ppid INTEGER NOT NULL,
+			comm TEXT NOT NULL,
+			cmdline TEXT,
+			exe_path TEXT,
+			working_dir TEXT,
+			username TEXT,
+			parent_comm TEXT,
+			container_id TEXT,
+			uid INTEGER,
+			gid INTEGER,
+			binary_hash TEXT,
+			environment TEXT,
+			exit_code INTEGER,
+			exit_time DATETIME);`,
+		`CREATE TABLE IF NOT EXISTS network_connections (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_uid TEXT NOT NULL,
+			process_uid TEXT NOT NULL,
+			network_uid TEXT NOT NULL,
+			community_id TEXT NOT NULL,
+			timestamp DATETIME NOT NULL,
+			pid INTEGER NOT NULL,
+			comm TEXT NOT NULL,
+			ppid INTEGER,
+			parent_comm TEXT,
+			protocol TEXT,
+			src_ip TEXT,
+			src_port INTEGER,
+			dst_ip TEXT,
+			dst_port INTEGER,
+			direction TEXT,
+			bytes INTEGER,
+			tcp_flags TEXT);`,
+		`CREATE TABLE IF NOT EXISTS dns_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_uid TEXT NOT NULL,
+			process_uid TEXT NOT NULL,
+			network_uid TEXT NOT NULL,
+			community_id TEXT NOT NULL,
+			conversation_uid TEXT NOT NULL,
+			timestamp DATETIME NOT NULL,
+			pid INTEGER NOT NULL,
+			comm TEXT NOT NULL,
+			ppid INTEGER,
+			parent_comm TEXT,
+			event_type TEXT NOT NULL,
+			dns_flags INTEGER,
+			query TEXT,
+			record_type TEXT,
+			transaction_id INTEGER,
+			src_ip TEXT,
+			src_port INTEGER,
+			dst_ip TEXT,
+			dst_port INTEGER,
+			answers TEXT,
+			ttl INTEGER);`,
+		`CREATE TABLE IF NOT EXISTS tls_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_uid TEXT NOT NULL,
+			process_uid TEXT NOT NULL,
+			network_uid TEXT NOT NULL,
+			community_id TEXT NOT NULL,
+			timestamp DATETIME NOT NULL,
+			pid INTEGER NOT NULL,
+			comm TEXT NOT NULL,
+			ppid INTEGER,
+			parent_comm TEXT,
+			src_ip TEXT,
+			src_port INTEGER,
+			dst_ip TEXT,
+			dst_port INTEGER,
+			version TEXT,
+			sni TEXT,
+			cipher_suites TEXT,
+			supported_groups TEXT,
+			handshake_length INTEGER,
+			ja4 TEXT,
+			ja4_hash TEXT);`,
+		`CREATE TABLE IF NOT EXISTS sigma_matches (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_uid TEXT NOT NULL,
+			process_uid TEXT NOT NULL,
+			network_uid TEXT,
+			community_id TEXT,
+			conversation_uid TEXT,
+			timestamp DATETIME NOT NULL,
+			rule_id TEXT NOT NULL,
+			rule_name TEXT NOT NULL,
+			rule_level TEXT NOT NULL,
+			rule_description TEXT,
+			match_details TEXT,
+			detection_source TEXT NOT NULL,
+			event_data TEXT,
+			rule_references TEXT,
+			rule_tags TEXT,
+			status TEXT DEFAULT 'new');`,
+	}
 
-	CREATE INDEX IF NOT EXISTS idx_processes_pid ON processes(pid);
-	CREATE INDEX IF NOT EXISTS idx_processes_ppid ON processes(ppid);
-	CREATE INDEX IF NOT EXISTS idx_processes_session ON processes(session_uid);
-	CREATE INDEX IF NOT EXISTS idx_processes_uid ON processes(process_uid);
-	CREATE INDEX IF NOT EXISTS idx_processes_parent_uid ON processes(parent_uid);
-	CREATE INDEX IF NOT EXISTS idx_processes_timestamp ON processes(timestamp);
+	// Execute each table creation separately
+	for i, table := range tables {
+		if _, err := db.Exec(table); err != nil {
+			return fmt.Errorf("failed to create table %d: %v", i+1, err)
+		}
+	}
 
-	-- Network connections
-	CREATE TABLE IF NOT EXISTS network_connections (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session_uid TEXT NOT NULL,
-		process_uid TEXT NOT NULL,
-		network_uid TEXT NOT NULL,
-        community_id TEXT NOT NULL,
-		timestamp DATETIME NOT NULL,
-		pid INTEGER NOT NULL,
-		comm TEXT NOT NULL,
-		ppid INTEGER,
-		parent_comm TEXT,
-		protocol TEXT,
-		src_ip TEXT,
-		src_port INTEGER,
-		dst_ip TEXT,
-		dst_port INTEGER,
-		direction TEXT,
-		bytes INTEGER,
-		tcp_flags TEXT
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_network_session ON network_connections(session_uid);
-	CREATE INDEX IF NOT EXISTS idx_network_process ON network_connections(process_uid);
-	CREATE INDEX IF NOT EXISTS idx_network_connection ON network_connections(network_uid);
-	CREATE INDEX IF NOT EXISTS idx_network_timestamp ON network_connections(timestamp);
-
-	-- DNS events
-	CREATE TABLE IF NOT EXISTS dns_events (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session_uid TEXT NOT NULL,
-		process_uid TEXT NOT NULL,
-		network_uid TEXT NOT NULL,
-        community_id TEXT NOT NULL,
-		conversation_uid TEXT NOT NULL,
-		timestamp DATETIME NOT NULL,
-		pid INTEGER NOT NULL,
-		comm TEXT NOT NULL,
-		ppid INTEGER,
-		parent_comm TEXT,
-		event_type TEXT NOT NULL,
-		dns_flags INTEGER,
-		query TEXT,
-		record_type TEXT,
-		transaction_id INTEGER,
-		src_ip TEXT,
-		src_port INTEGER,
-		dst_ip TEXT,
-		dst_port INTEGER,
-		answers TEXT,
-		ttl INTEGER
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_dns_session ON dns_events(session_uid);
-	CREATE INDEX IF NOT EXISTS idx_dns_process ON dns_events(process_uid);
-	CREATE INDEX IF NOT EXISTS idx_dns_network ON dns_events(network_uid);
-	CREATE INDEX IF NOT EXISTS idx_dns_conversation ON dns_events(conversation_uid);
-	CREATE INDEX IF NOT EXISTS idx_dns_timestamp ON dns_events(timestamp);
-
-	-- TLS events
-	CREATE TABLE IF NOT EXISTS tls_events (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session_uid TEXT NOT NULL,
-		process_uid TEXT NOT NULL,
-		network_uid TEXT NOT NULL,
-        community_id TEXT NOT NULL,
-		timestamp DATETIME NOT NULL,
-		pid INTEGER NOT NULL,
-		comm TEXT NOT NULL,
-		ppid INTEGER,
-		parent_comm TEXT,
-		src_ip TEXT,
-		src_port INTEGER,
-		dst_ip TEXT,
-		dst_port INTEGER,
-		version TEXT,
-		sni TEXT,
-		cipher_suites TEXT,
-		supported_groups TEXT,
-		handshake_length INTEGER,
-		ja4 TEXT,
-		ja4_hash TEXT
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_tls_session ON tls_events(session_uid);
-	CREATE INDEX IF NOT EXISTS idx_tls_process ON tls_events(process_uid);
-	CREATE INDEX IF NOT EXISTS idx_tls_network ON tls_events(network_uid);
-	CREATE INDEX IF NOT EXISTS idx_tls_timestamp ON tls_events(timestamp);
-
-	-- Sigma matches
-	CREATE TABLE IF NOT EXISTS sigma_matches (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session_uid TEXT NOT NULL,
-		process_uid TEXT NOT NULL,
-		network_uid TEXT,
-        community_id TEXT,
-		conversation_uid TEXT,
-		timestamp DATETIME NOT NULL,
-		rule_id TEXT NOT NULL,
-		rule_name TEXT NOT NULL,
-		rule_level TEXT NOT NULL,
-		rule_description TEXT,
-		match_details TEXT,
-		detection_source TEXT NOT NULL,
-		event_data TEXT,
-		rule_references TEXT,
-		rule_tags TEXT,
-		status TEXT DEFAULT 'new'
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_sigma_session ON sigma_matches(session_uid);
-	CREATE INDEX IF NOT EXISTS idx_sigma_process ON sigma_matches(process_uid);
-	CREATE INDEX IF NOT EXISTS idx_sigma_network ON sigma_matches(network_uid);
-	CREATE INDEX IF NOT EXISTS idx_sigma_timestamp ON sigma_matches(timestamp);
-	CREATE INDEX IF NOT EXISTS idx_sigma_rule ON sigma_matches(rule_id);
-	CREATE INDEX IF NOT EXISTS idx_sigma_status ON sigma_matches(status);
-	`
-
-	_, err := db.Exec(schema)
-	return err
+	return nil
 }
 
 func (f *SQLiteFormatter) Initialize() error {
@@ -244,12 +203,12 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 	if eventType == "exit" {
 		_, err := f.db.Exec(`
             INSERT INTO processes (
-                session_uid, process_uid, parent_uid, event_type, timestamp, 
+                session_uid, process_uid, event_type, parent_uid, timestamp, 
                 pid, ppid, comm, cmdline, exe_path, working_dir, username, 
                 parent_comm, container_id, uid, gid, binary_hash,
                 exit_code, exit_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			f.sessionUID, info.ProcessUID, parentInfo.ProcessUID, eventType, BpfTimestampToTime(event.Timestamp),
+			f.sessionUID, info.ProcessUID, eventType, parentInfo.ProcessUID, BpfTimestampToTime(event.Timestamp),
 			info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
 			info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash,
 			info.ExitCode, BpfTimestampToTime(event.Timestamp))
@@ -270,12 +229,12 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 	// if eventType == "exec" || eventType == "fork"
 	_, err := f.db.Exec(`
             INSERT INTO processes (
-                session_uid, process_uid, parent_uid, event_type, timestamp, fingerprint,
+                session_uid, process_uid, event_type, fingerprint, parent_uid, timestamp,
                 pid, ppid, comm, cmdline, exe_path, working_dir, username, 
                 parent_comm, container_id, uid, gid, binary_hash,
                 exit_code, exit_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, parentInfo.ProcessUID, eventType, BpfTimestampToTime(event.Timestamp), fingerprint,
+		f.sessionUID, info.ProcessUID, eventType, fingerprint, parentInfo.ProcessUID, BpfTimestampToTime(event.Timestamp),
 		info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
 		info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash, nil, nil)
 	if err != nil {
@@ -383,13 +342,13 @@ func (f *SQLiteFormatter) FormatDNS(event *types.UserSpaceDNSEvent, info *types.
 	// Insert into database
 	_, err = f.db.Exec(`
 		INSERT INTO dns_events (
-			session_uid, process_uid, network_uid, conversation_uid, community_id,
+			session_uid, process_uid, network_uid, community_id, conversation_uid,
 			timestamp, pid, comm, ppid, parent_comm,
 			event_type, dns_flags, query, record_type,
 			transaction_id, src_ip, src_port, dst_ip, dst_port,
 			answers, ttl
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, networkUID, event.ConversationID, communityID,
+		f.sessionUID, info.ProcessUID, networkUID, communityID, event.ConversationID,
 		BpfTimestampToTime(event.Timestamp),
 		event.Pid, event.Comm, event.Ppid, event.ParentComm,
 		map[bool]string{true: "response", false: "query"}[event.IsResponse],
