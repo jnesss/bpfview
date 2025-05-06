@@ -1,7 +1,9 @@
 github.com/ebitengine/purego v0.8.2 h1:jPPGWs2sZ1UgOSgD2bClL0MJIqu58nOmIcBuXr62z1I=
 github.com/ebitengine/purego v0.8.2/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
-github.com/jnesss/bpfview/types v0.0.0-20250410184514-307cf1204dd8 h1:ZTHHJ5rlwErlj/EvkSQgpfRpDJAAM+H2izIaoJgJFdg=
-github.com/jnesss/bpfview/types v0.0.0-20250410184514-307cf1204dd8/go.mod h1:jItmOCpiPJZHC36V5XLFiEUQtT4p/EUUiU0gj9Q/kQU=
+github.com/jnesss/bpfview/fingerprint v0.0.0-20250505202533-00261f99d622 h1:6/AZZl7Pe3dEDUM2MUMCHBpHx1+dmFCHkEdnDF4kSoI=
+github.com/jnesss/bpfview/fingerprint v0.0.0-20250505202533-00261f99d622/go.mod h1:kqaZXXV7Wdj2ge1k3jkfGDRAYfK0T8JaNBxKt2nhszw=
+github.com/jnesss/bpfview/types v0.0.0-20250425142618-5589dc619074 h1:YnBbOeF45w84f+ZB5AyDiYzhX9K9cucIdUDkP+sdU+k=
+github.com/jnesss/bpfview/types v0.0.0-20250425142618-5589dc619074/go.mod h1:jItmOCpiPJZHC36V5XLFiEUQtT4p/EUUiU0gj9Q/kQU=
 github.com/jnesss/limbo/bindings/go v0.0.0-20250503230926-aee6259310b1 h1:6S2FcQEQqK5e/uJaM6FHGB3yDXtUBedu+v0jw/fSYTU=
 github.com/jnesss/limbo/bindings/go v0.0.0-20250503230926-aee6259310b1/go.mod h1:kp0ZohhMPriwwhf0Uq9Y1Y5tfWQ6yZRwt1boq5aS7DA=
 golang.org/x/sys v0.29.0 h1:TPYlXGxvx1MGTn2GiZDhnjPA9wZzZeGKHHmKhHYvgaU=

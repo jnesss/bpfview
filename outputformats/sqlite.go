@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	_ "github.com/tursodatabase/limbo"
 
+	"github.com/jnesss/bpfview/fingerprint"
 	"github.com/jnesss/bpfview/types"
 )
 
@@ -83,7 +86,11 @@ func initSchema(db *sql.DB) error {
 			binary_hash TEXT,
 			environment TEXT,
 			exit_code INTEGER,
-			exit_time DATETIME);`,
+			exit_time DATETIME,
+			-- Vector embedding columns
+			proc_embedding F32_BLOB(64),  -- Process behavior embedding
+			context_embedding F32_BLOB(32) -- Contextual embedding
+		);`,
 		`CREATE TABLE IF NOT EXISTS network_connections (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_uid TEXT NOT NULL,
@@ -102,7 +109,10 @@ func initSchema(db *sql.DB) error {
 			dst_port INTEGER,
 			direction TEXT,
 			bytes INTEGER,
-			tcp_flags TEXT);`,
+			tcp_flags TEXT,
+			-- Vector embedding columns
+			net_embedding F32_BLOB(32)  -- Network behavior embedding
+		);`,
 		`CREATE TABLE IF NOT EXISTS dns_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_uid TEXT NOT NULL,
@@ -125,7 +135,10 @@ func initSchema(db *sql.DB) error {
 			dst_ip TEXT,
 			dst_port INTEGER,
 			answers TEXT,
-			ttl INTEGER);`,
+			ttl INTEGER,
+			-- Vector embedding columns
+			dns_embedding F32_BLOB(32)  -- DNS behavior embedding
+		);`,
 		`CREATE TABLE IF NOT EXISTS tls_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_uid TEXT NOT NULL,
@@ -147,7 +160,10 @@ func initSchema(db *sql.DB) error {
 			supported_groups TEXT,
 			handshake_length INTEGER,
 			ja4 TEXT,
-			ja4_hash TEXT);`,
+			ja4_hash TEXT,
+			-- Vector embedding columns
+			tls_embedding F32_BLOB(32)  -- TLS behavior embedding
+		);`,
 		`CREATE TABLE IF NOT EXISTS sigma_matches (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_uid TEXT NOT NULL,
@@ -191,7 +207,6 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 	defer f.mu.Unlock()
 
 	var eventType string
-
 	if event.EventType == types.EVENT_PROCESS_EXIT {
 		eventType = "exit"
 	} else if event.EventType == types.EVENT_PROCESS_FORK {
@@ -200,23 +215,23 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 		eventType = "exec"
 	}
 
-	if eventType == "exit" {
-		_, err := f.db.Exec(`
-            INSERT INTO processes (
-                session_uid, process_uid, event_type, parent_uid, timestamp, 
-                pid, ppid, comm, cmdline, exe_path, working_dir, username, 
-                parent_comm, container_id, uid, gid, binary_hash,
-                exit_code, exit_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			f.sessionUID, info.ProcessUID, eventType, parentInfo.ProcessUID, BpfTimestampToTime(event.Timestamp),
-			info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
-			info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash,
-			info.ExitCode, BpfTimestampToTime(event.Timestamp))
+	// Create process pattern for embedding generation
+	pattern := fingerprint.NewProcessPattern(info, parentInfo)
 
-		// EXIT is done
-		return err
+	// Set parent pattern if available
+	if parentInfo != nil && parentInfo.Fingerprint != "" {
+		pattern.ParentPattern = parentInfo.Fingerprint
 	}
 
+	// Generate embeddings
+	procEmbedding := createProcessEmbedding(pattern)
+	contextEmbedding := createContextEmbedding(info)
+
+	// Convert embeddings to SQL strings - format as [val1,val2,val3]
+	procEmbeddingStr := vectorToSQLString(procEmbedding)
+	contextEmbeddingStr := vectorToSQLString(contextEmbedding)
+
+	// Get fingerprint
 	var fingerprint string
 	if info.Fingerprint != "" {
 		if info.ParentFingerprint != "" {
@@ -226,24 +241,9 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 		}
 	}
 
-	// if eventType == "exec" || eventType == "fork"
-	_, err := f.db.Exec(`
-            INSERT INTO processes (
-                session_uid, process_uid, event_type, fingerprint, parent_uid, timestamp,
-                pid, ppid, comm, cmdline, exe_path, working_dir, username, 
-                parent_comm, container_id, uid, gid, binary_hash,
-                exit_code, exit_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.sessionUID, info.ProcessUID, eventType, fingerprint, parentInfo.ProcessUID, BpfTimestampToTime(event.Timestamp),
-		info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
-		info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash, nil, nil)
-	if err != nil {
-		return err
-	}
-
 	// Convert environment to JSON if present
-	//  Might put env vars in a separate table eventually..
 	var envJSON []byte
+	var err error
 	if len(info.Environment) > 0 {
 		envJSON, err = json.Marshal(info.Environment)
 		if err != nil {
@@ -251,9 +251,34 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 		}
 	}
 
-	// Insert into database
-	_, err = f.db.Exec(`UPDATE processes set environment = ? where session_uid = ? and process_uid = ?`,
-		string(envJSON), f.sessionUID, info.ProcessUID)
+	// Get parent UID
+	var parentUID string
+	if parentInfo != nil && parentInfo.ProcessUID != "" {
+		parentUID = parentInfo.ProcessUID
+	}
+
+	// Determine exit code and time based on event type
+	var exitCode interface{} = nil
+	var exitTime interface{} = nil
+	if eventType == "exit" {
+		exitCode = info.ExitCode
+		exitTime = BpfTimestampToTime(event.Timestamp)
+	}
+
+	// Insert process with both vector embeddings in a single statement
+	_, err = f.db.Exec(`
+        INSERT INTO processes (
+            session_uid, process_uid, event_type, fingerprint, parent_uid, timestamp, 
+            pid, ppid, comm, cmdline, exe_path, working_dir, username, 
+            parent_comm, container_id, uid, gid, binary_hash,
+            environment, exit_code, exit_time,
+            proc_embedding, context_embedding
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector(?), vector(?))`,
+		f.sessionUID, info.ProcessUID, eventType, fingerprint, parentUID, BpfTimestampToTime(event.Timestamp),
+		info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
+		info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash,
+		string(envJSON), exitCode, exitTime,
+		procEmbeddingStr, contextEmbeddingStr)
 
 	return err
 }
@@ -455,4 +480,228 @@ func (f *SQLiteFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 		string(tagsJSON))
 
 	return err
+}
+
+// createProcessEmbedding generates a vector embedding from process information
+func createProcessEmbedding(pattern *fingerprint.ProcessPattern) []float32 {
+	// Create a 64-dimensional vector embedding
+	embedding := make([]float32, 64)
+
+	// 1. Basic process attributes (dimensions 0-9)
+	// Event type mapping
+	switch pattern.EventType {
+	case "e": // exec
+		embedding[0] = 1.0
+	case "f": // fork
+		embedding[1] = 1.0
+	case "x": // exit
+		embedding[2] = 1.0
+	}
+
+	// Container status
+	if pattern.IsContainer {
+		embedding[3] = 1.0
+	}
+
+	// User ID (normalized to 0-1 range)
+	embedding[4] = float32(pattern.UID%1000) / 1000.0
+
+	// 2. Command line features (dimensions 10-39)
+	tokens := strings.Fields(pattern.NormalizedCommand)
+
+	// Track feature counts
+	var flagCount, filepathCount, valueCount, urlCount, ipCount int
+	var hasRedirection, hasPipe bool
+
+	for _, token := range tokens {
+		// Flag analysis
+		if strings.HasPrefix(token, "FLAG_") {
+			flagCount++
+			// Specific flag types
+			if strings.Contains(token, "VERBOSE") || strings.Contains(token, "DEBUG") {
+				embedding[10] = 1.0
+			}
+			if strings.Contains(token, "OUTPUT") || strings.Contains(token, "FILE") {
+				embedding[11] = 1.0
+			}
+			if strings.Contains(token, "HELP") || strings.Contains(token, "VERSION") {
+				embedding[12] = 1.0
+			}
+			if strings.Contains(token, "RECURSIVE") || strings.Contains(token, "ALL") {
+				embedding[13] = 1.0
+			}
+		}
+
+		// Filepath analysis
+		if strings.HasPrefix(token, "FILEPATH") {
+			filepathCount++
+			// Specific path types
+			if token == "FILEPATH_TEMP" {
+				embedding[15] = 1.0
+			}
+			if token == "FILEPATH_HOME" {
+				embedding[16] = 1.0
+			}
+			if token == "FILEPATH_SYS" {
+				embedding[17] = 1.0
+			}
+			if token == "FILEPATH_ETC" || token == "FILEPATH_VAR" {
+				embedding[18] = 1.0
+			}
+		}
+
+		// URL and IP analysis
+		if token == "URL" {
+			urlCount++
+			embedding[20] = 1.0
+		}
+		if token == "IP" {
+			ipCount++
+			embedding[21] = 1.0
+		}
+
+		// Shell operations
+		if token == "PIPE" {
+			hasPipe = true
+			embedding[25] = 1.0
+		}
+		if token == "REDIRECT" {
+			hasRedirection = true
+			embedding[26] = 1.0
+		}
+		if token == "AND" || token == "OR" {
+			embedding[27] = 1.0
+		}
+
+		// Generic values
+		if token == "VALUE" || token == "NUM" || token == "DATE" {
+			valueCount++
+		}
+	}
+
+	// Command complexity features
+	embedding[30] = min(float32(flagCount)/5.0, 1.0)     // Normalized flag count
+	embedding[31] = min(float32(filepathCount)/5.0, 1.0) // Normalized filepath count
+	embedding[32] = min(float32(valueCount)/10.0, 1.0)   // Normalized value count
+	embedding[33] = min(float32(len(tokens))/20.0, 1.0)  // Normalized token count
+
+	// Network related features
+	embedding[35] = min(float32(urlCount)/3.0, 1.0) // Normalized URL count
+	embedding[36] = min(float32(ipCount)/3.0, 1.0)  // Normalized IP count
+
+	// Command syntax complexity
+	if hasPipe && hasRedirection {
+		embedding[38] = 1.0 // Complex shell pipeline
+	} else if hasPipe || hasRedirection {
+		embedding[39] = 1.0 // Simple shell operation
+	}
+
+	// 3. Parent relationship (dimensions 40-49)
+	if pattern.ParentPattern != "" {
+		// Extract features from parent fingerprint
+		embedding[40] = 1.0 // Has known parent
+
+		// We could hash the parent pattern and use the value for embedding dimensions
+		h := fnv.New32a()
+		h.Write([]byte(pattern.ParentPattern))
+		hashVal := float32(h.Sum32()%1000) / 1000.0
+		embedding[41] = hashVal
+	}
+
+	// 4. Working directory features (dimensions 50-59)
+	switch pattern.WorkingDir {
+	case "FILEPATH_HOME":
+		embedding[50] = 1.0
+	case "FILEPATH_TEMP":
+		embedding[51] = 1.0
+	case "FILEPATH_SYS":
+		embedding[52] = 1.0
+	case "FILEPATH_VAR":
+		embedding[53] = 1.0
+	case "FILEPATH_ETC":
+		embedding[54] = 1.0
+	default:
+		embedding[55] = 1.0 // Other directories
+	}
+
+	// 5. Reserved for future features (dimensions 60-63)
+
+	return embedding
+}
+
+// createContextEmbedding generates an embedding capturing context (time, system state)
+func createContextEmbedding(info *types.ProcessInfo) []float32 {
+	// Create a 32-dimensional context embedding
+	embedding := make([]float32, 32)
+
+	// Time-based features
+	hour := float32(info.StartTime.Hour())
+	// Normalize hour of day (0-23) to 0-1 range
+	embedding[0] = hour / 23.0
+
+	// Day of week (0=Sunday, 6=Saturday)
+	dayOfWeek := float32(info.StartTime.Weekday())
+	embedding[1] = dayOfWeek / 6.0
+
+	// Business hours feature (8am-6pm = 1.0, otherwise scaled to zero)
+	if hour >= 8 && hour <= 18 {
+		embedding[2] = 1.0
+	} else if hour < 8 {
+		// Scale from midnight (0) to 8am (near 1.0)
+		embedding[2] = hour / 8.0
+	} else {
+		// Scale from 6pm (near 1.0) to midnight (0)
+		embedding[2] = (24.0 - hour) / 6.0
+	}
+
+	// Weekend feature
+	if dayOfWeek == 0 || dayOfWeek == 6 {
+		embedding[3] = 1.0
+	}
+
+	// User context
+	if info.UID == 0 {
+		// Root user
+		embedding[4] = 1.0
+	} else if info.UID < 1000 {
+		// System user
+		embedding[5] = 1.0
+	} else {
+		// Regular user
+		embedding[6] = 1.0
+	}
+
+	// Container context
+	if info.ContainerID != "" && info.ContainerID != "-" {
+		embedding[7] = 1.0
+	}
+
+	// Parse username for specific user types
+	username := strings.ToLower(info.Username)
+	if strings.Contains(username, "admin") || strings.Contains(username, "root") {
+		embedding[8] = 1.0
+	} else if strings.Contains(username, "service") || strings.Contains(username, "daemon") {
+		embedding[9] = 1.0
+	}
+
+	// Reserved for additional context features
+
+	return embedding
+}
+
+// vectorToSQLString converts a float32 slice to a proper string format for Limbo's vector function
+func vectorToSQLString(embedding []float32) string {
+	values := make([]string, len(embedding))
+	for i, val := range embedding {
+		values[i] = fmt.Sprintf("%f", val)
+	}
+	return fmt.Sprintf("[%s]", strings.Join(values, ","))
+}
+
+// Utility function to get the minimum of two float32 values
+func min(a, b float32) float32 {
+	if a < b {
+		return a
+	}
+	return b
 }
