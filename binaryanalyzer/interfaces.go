@@ -7,6 +7,9 @@ type BinaryAnalyzer interface {
 	// Submit a binary path for analysis
 	SubmitBinary(path string)
 
+	// Submit a binary with pre-calculated MD5 hash
+	SubmitBinaryWithHash(path string, md5Hash string)
+
 	// Get metadata for a binary by hash
 	GetMetadataByHash(hash string) (BinaryMetadata, bool)
 

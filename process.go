@@ -951,9 +951,17 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 	// Calculate hash if enabled and not already set
 	if globalEngine != nil && globalEngine.config.HashBinaries &&
 		info.BinaryHash == "" && info.ExePath != "" && info.ExePath != "[kernel]" {
+
 		if hash, err := CalculateMD5(info.ExePath); err == nil {
 			info.BinaryHash = hash
 			operationResults.WithLabelValues("process", "hash_calc", "success").Inc()
+
+			// Submit to binary analyzer with pre-calculated hash
+			if globalBinaryAnalyzer != nil {
+				go func(exePath, md5Hash string) {
+					globalBinaryAnalyzer.SubmitBinaryWithHash(exePath, md5Hash)
+				}(info.ExePath, hash)
+			}
 		} else {
 			operationResults.WithLabelValues("process", "hash_calc", "failure").Inc()
 		}
