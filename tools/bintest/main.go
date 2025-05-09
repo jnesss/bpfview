@@ -80,4 +80,40 @@ func main() {
 	fmt.Printf("First Seen:  %s\n", metadata.FirstSeen.Format(time.RFC3339))
 	fmt.Printf("MD5 Hash:    %s\n", metadata.MD5Hash)
 	fmt.Printf("SHA256 Hash: %s\n", metadata.SHA256Hash)
+
+	// Display ELF information if available
+	if metadata.IsELF {
+		fmt.Println("\n=== ELF Analysis ===")
+		fmt.Printf("Type:              %s\n", metadata.ELFType)
+		fmt.Printf("Architecture:      %s\n", metadata.Architecture)
+		fmt.Printf("Interpreter:       %s\n", metadata.Interpreter)
+		fmt.Printf("Statically Linked: %v\n", metadata.IsStaticallyLinked)
+		fmt.Printf("Debug Info:        %v\n", metadata.HasDebugInfo)
+
+		fmt.Printf("\nImported Libraries: %d\n", len(metadata.ImportedLibraries))
+		for i, lib := range metadata.ImportedLibraries {
+			if i < 10 || *verbose { // Show all with verbose, otherwise just first 10
+				fmt.Printf("  - %s\n", lib)
+			} else if i == 10 {
+				fmt.Printf("  - ... (%d more)\n", len(metadata.ImportedLibraries)-10)
+				break
+			}
+		}
+
+		// Change this section to show counts:
+		fmt.Printf("\nImported Symbols: %d\n", metadata.ImportedSymbolCount)
+		fmt.Printf("Exported Symbols: %d\n", metadata.ExportedSymbolCount)
+
+		// In the future we'll display actual symbol data for key binaries
+		// and implement similarity detection to find binary variants
+
+		if *verbose {
+			fmt.Printf("\nSections: %d\n", len(metadata.Sections))
+			for _, section := range metadata.Sections {
+				fmt.Printf("  - %s\n", section)
+			}
+		}
+	} else {
+		fmt.Println("\nNot an ELF binary or ELF analysis not available")
+	}
 }
