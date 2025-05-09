@@ -44,12 +44,34 @@ func New(config Config) (BinaryAnalyzer, error) {
 	return analyzer, nil
 }
 
-// SubmitBinary processes a binary file for analysis
+// SubmitBinary calculates the MD5 hash and then calls SubmitBinaryWithHash
 func (a *analyzerImpl) SubmitBinary(path string) {
 	// Basic validation
 	if path == "" {
+		a.logger.Debug("binary", "Empty path submitted, skipping")
 		return
 	}
+
+	// Calculate MD5 hash
+	md5Hash, err := CalculateMD5(path)
+	if err != nil {
+		a.logger.Warning("binary", "Failed to calculate MD5 for %s: %v", path, err)
+		return
+	}
+
+	// Call the implementation with the calculated hash
+	a.SubmitBinaryWithHash(path, md5Hash)
+}
+
+// SubmitBinaryWithHash processes a binary file with a pre-calculated MD5 hash
+func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
+	// Basic validation
+	if path == "" || md5Hash == "" {
+		a.logger.Debug("binary", "Empty path or empty md5hash submitted, skipping")
+		return
+	}
+
+	a.logger.Info("binary", "Processing binary: %s", path)
 
 	// Get file info
 	fileInfo, err := os.Stat(path)
@@ -60,13 +82,7 @@ func (a *analyzerImpl) SubmitBinary(path string) {
 
 	// Skip directories
 	if fileInfo.IsDir() {
-		return
-	}
-
-	// Calculate MD5 hash
-	md5Hash, err := CalculateMD5(path)
-	if err != nil {
-		a.logger.Warning("binary", "Failed to calculate MD5 for %s: %v", path, err)
+		a.logger.Debug("binary", "Skipping directory: %s", path)
 		return
 	}
 
@@ -80,15 +96,15 @@ func (a *analyzerImpl) SubmitBinary(path string) {
 	// Store in database
 	now := time.Now()
 	_, err = a.db.Exec(`
-		INSERT INTO binaries (path, md5_hash, sha256_hash, file_size, mod_time, first_seen)
-		VALUES (?, ?, ?, ?, ?, ?)`, path, md5Hash, sha256Hash, fileInfo.Size(), fileInfo.ModTime(), now)
+        INSERT INTO binaries (path, md5_hash, sha256_hash, file_size, mod_time, first_seen)
+        VALUES (?, ?, ?, ?, ?, ?)`, path, md5Hash, sha256Hash, fileInfo.Size(), fileInfo.ModTime(), now)
 
 	if err != nil {
-		a.logger.Warning("binary", "Failed to store binary in database: %v", err)
+		a.logger.Error("binary", "Database error inserting binary %s: %v", path, err)
 		return
 	}
 
-	a.logger.Info("binary", "Analyzed %s: MD5=%s, SHA256=%s", path, md5Hash, sha256Hash)
+	a.logger.Info("binary", "Successfully processed binary %s: MD5=%s", path, md5Hash)
 }
 
 // GetMetadataByHash retrieves binary metadata by its MD5 hash
