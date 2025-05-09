@@ -37,6 +37,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 
+	"github.com/jnesss/bpfview/binaryanalyzer"
 	"github.com/jnesss/bpfview/outputformats"
 	"github.com/jnesss/bpfview/types"
 )
@@ -56,13 +57,15 @@ type readerContext struct {
 }
 
 var (
-	globalLogger        *Logger
-	globalEngine        *FilterEngine
-	globalExcludeEngine *ExclusionEngine
-	globalSigmaEngine   *SigmaEngine
-	globalSessionUid    string
-	globalProcessLevel  types.ProcessInfoLevel
-	responseManager     *ResponseManager
+	globalLogger         *Logger
+	globalEngine         *FilterEngine
+	globalExcludeEngine  *ExclusionEngine
+	globalSigmaEngine    *SigmaEngine
+	globalSessionUid     string
+	globalProcessLevel   types.ProcessInfoLevel
+	globalBinaryAnalyzer binaryanalyzer.BinaryAnalyzer
+
+	responseManager *ResponseManager
 )
 
 var BootTime time.Time
@@ -73,6 +76,7 @@ func main() {
 		showTimestamp    bool
 		filterConfig     FilterConfig
 		HashBinaries     bool
+		BinaryDBPath     string
 		format           string
 		addHostname      bool
 		addIP            bool
@@ -280,6 +284,28 @@ func main() {
 			metricsCollector.Start()
 			defer metricsCollector.Stop()
 
+			// Initialize binary analyzer if enabled
+			if config.HashBinaries {
+				log.Printf("Initializing binary analyzer...")
+
+				// Create binary analyzer
+				analyzerConfig := binaryanalyzer.Config{
+					DBPath:  filepath.Join(logDir, config.BinaryDBPath),
+					Workers: runtime.NumCPU(),
+					Logger:  globalLogger, // Use the existing logger
+				}
+
+				var err error
+				globalBinaryAnalyzer, err = binaryanalyzer.New(analyzerConfig)
+				if err != nil {
+					return fmt.Errorf("failed to initialize binary analyzer: %v", err)
+				}
+				defer globalBinaryAnalyzer.Close()
+
+				log.Printf("Binary analyzer initialized with database at %s",
+					filepath.Join(logDir, "binarymetadata.db"))
+			}
+
 			if config.sigmaRulesDir != "" {
 				var err error
 				globalSigmaEngine, err = NewSigmaEngine(config.sigmaRulesDir, config.sigmaQueueSize)
@@ -407,6 +433,9 @@ func main() {
 
 	// Optional features
 	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
+	rootCmd.Flags().StringVar(&config.BinaryDBPath, "binary-db", "binarymetadata.db",
+		"Path to binary metadata database when using --hash-binaries")
+
 	rootCmd.Flags().StringVar(&config.sigmaRulesDir, "sigma", "",
 		"Directory containing Sigma rules for process and network detection (if not specified, Sigma detection is disabled)")
 	rootCmd.Flags().IntVar(&config.sigmaQueueSize, "sigma-queue-size", 10000,
@@ -475,10 +504,11 @@ DNS Filters:
 TLS Filters:
   --tls-version strings Filter by TLS version (1.0, 1.1, 1.2, 1.3)
   --sni strings         Filter by SNI hostname (supports wildcards)
-  
+    
 Optional Features:
   --hash-binaries      Calculate and log MD5 hashes of executables
                        Useful for threat hunting and malware detection
+  --binary-db file     Path to binary metadata database when using --hash-binaries
   --sigma <dir>        Directory containing Sigma rules for process and network detection
                        If not specified, Sigma detection is disabled
   --sigma-queue-size   Maximum number of events to queue for Sigma detection
