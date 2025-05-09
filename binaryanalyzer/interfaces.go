@@ -28,6 +28,29 @@ type BinaryMetadata struct {
 	FileSize   int64     // Size in bytes
 	ModTime    time.Time // Last modification time
 	FirstSeen  time.Time // When this binary was first observed
+
+	// ELF-specific information
+	IsELF             bool     // Whether this is an ELF binary
+	ELFType           string   // Executable, shared object, etc.
+	Architecture      string   // x86_64, ARM, etc.
+	Interpreter       string   // Dynamic linker path
+	ImportedLibraries []string // Shared libraries imported
+
+	// Symbol information
+	ImportedSymbols     []string // Imported symbols (we don't store these now, but might in Phase 5)
+	ExportedSymbols     []string // Exported symbols (we don't store these now, but might in Phase 5)
+	ImportedSymbolCount int      // Count of imported symbols
+	ExportedSymbolCount int      // Count of exported symbols
+
+	IsStaticallyLinked bool     // Whether the binary is statically linked
+	Sections           []string // Section names
+	HasDebugInfo       bool     // Whether the binary contains debug info
+
+	// For future vector embeddings and similarity search
+	// TODO: Add vector embedding field for binary similarity search
+	// VectorEmbedding []float32 // Feature vector for similarity search
+	// SimilarityScore float32    // Similarity score to most similar known binary
+	// SimilarBinaryHash string   // Hash of the most similar binary
 }
 
 // Config for the binary analyzer

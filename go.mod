@@ -10,7 +10,7 @@ replace github.com/jnesss/bpfview/outputformats => ./outputformats
 
 replace github.com/jnesss/bpfview/binaryanalyzer => ./binaryanalyzer
 
-replace github.com/tursodatabase/limbo => github.com/jnesss/limbo/bindings/go v0.0.0-20250509041559-66462cb66f4c
+replace github.com/tursodatabase/limbo => github.com/jnesss/limbo/bindings/go v0.0.0-20250509165241-d8db5a187b06
 
 require (
 	github.com/bradleyjkemp/sigma-go v0.6.6
