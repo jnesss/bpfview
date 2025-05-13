@@ -227,6 +227,40 @@ type SigmaMatchJSON struct {
 	} `json:"labels"`
 }
 
+// BinaryJSON structure for binary events
+type BinaryJSON struct {
+	Timestamp  string    `json:"timestamp"`
+	SessionUID string    `json:"session_uid"`
+	Host       *HostInfo `json:"host,omitempty"`
+	EventType  string    `json:"event_type"`
+	ProcessUID string    `json:"process_uid"`
+	Process    struct {
+		PID        uint32 `json:"pid"`
+		Comm       string `json:"comm"`
+		PPID       uint32 `json:"ppid"`
+		ParentComm string `json:"parent_comm"`
+	} `json:"process"`
+	Binary struct {
+		Path               string   `json:"path"`
+		MD5Hash            string   `json:"md5_hash"`
+		SHA256Hash         string   `json:"sha256_hash,omitempty"`
+		FileSize           int64    `json:"file_size"`
+		IsELF              bool     `json:"is_elf"`
+		ELFType            string   `json:"elf_type,omitempty"`
+		Architecture       string   `json:"architecture,omitempty"`
+		Interpreter        string   `json:"interpreter,omitempty"`
+		ImportedLibraries  []string `json:"imported_libraries,omitempty"`
+		ImportCount        int      `json:"import_count"`
+		ExportCount        int      `json:"export_count"`
+		IsStaticallyLinked bool     `json:"is_statically_linked"`
+		HasDebugInfo       bool     `json:"has_debug_info"`
+		IsFromPackage      bool     `json:"is_from_package"`
+		PackageName        string   `json:"package_name,omitempty"`
+		PackageVersion     string   `json:"package_version,omitempty"`
+	} `json:"binary"`
+	Message string `json:"message"`
+}
+
 func NewJSONFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *JSONFormatter {
 	f := &JSONFormatter{
 		output:       output,
@@ -704,6 +738,60 @@ func (f *JSONFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 			jsonEvent.Labels.ConversationID = match.ConversationID
 		}
 	}
+
+	return f.encoder.Encode(jsonEvent)
+}
+
+func (f *JSONFormatter) FormatBinary(binary *types.BinaryInfo) error {
+	jsonEvent := BinaryJSON{
+		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		SessionUID: f.sessionUID,
+		EventType:  "binary_seen",
+		ProcessUID: binary.ProcessUID,
+	}
+
+	// Add host info if enabled
+	if f.hostname != "" || f.hostIP != "" {
+		jsonEvent.Host = &HostInfo{
+			Name: f.hostname,
+			IP:   f.hostIP,
+		}
+	}
+
+	// Fill process information
+	jsonEvent.Process.PID = binary.PID
+	jsonEvent.Process.Comm = binary.Comm
+	jsonEvent.Process.PPID = binary.PPID
+	jsonEvent.Process.ParentComm = binary.ParentComm
+
+	// Fill binary information
+	jsonEvent.Binary.Path = binary.Path
+	jsonEvent.Binary.MD5Hash = binary.MD5Hash
+	jsonEvent.Binary.SHA256Hash = binary.SHA256Hash
+	jsonEvent.Binary.FileSize = binary.FileSize
+	jsonEvent.Binary.IsELF = binary.IsELF
+	jsonEvent.Binary.ELFType = binary.ELFType
+	jsonEvent.Binary.Architecture = binary.Architecture
+	jsonEvent.Binary.Interpreter = binary.Interpreter
+	jsonEvent.Binary.ImportedLibraries = binary.ImportedLibraries
+	jsonEvent.Binary.ImportCount = binary.ImportCount
+	jsonEvent.Binary.ExportCount = binary.ExportCount
+	jsonEvent.Binary.IsStaticallyLinked = binary.IsStaticallyLinked
+	jsonEvent.Binary.HasDebugInfo = binary.HasDebugInfo
+	jsonEvent.Binary.IsFromPackage = binary.IsFromPackage
+	jsonEvent.Binary.PackageName = binary.PackageName
+	jsonEvent.Binary.PackageVersion = binary.PackageVersion
+
+	// Create message
+	elfType := ""
+	if binary.IsELF {
+		elfType = binary.ELFType + " "
+	}
+
+	jsonEvent.Message = fmt.Sprintf("New binary: %s (%s%s)",
+		binary.Path,
+		elfType,
+		binary.Architecture)
 
 	return f.encoder.Encode(jsonEvent)
 }

@@ -132,6 +132,21 @@ type ecsEvent struct {
 	RuleMatchDetails string                 `json:"rule.matched_details,omitempty"`
 	DetectionFields  map[string]interface{} `json:"rule.matched_fields,omitempty"`
 
+	// File/Binary information (ECS file.* fields)
+	FilePath       string `json:"file.path,omitempty"`
+	FileSize       int64  `json:"file.size,omitempty"`
+	FileHashMD5    string `json:"file.hash.md5,omitempty"`
+	FileHashSHA256 string `json:"file.hash.sha256,omitempty"`
+	FileCreatedAt  string `json:"file.created,omitempty"`
+	FileModifiedAt string `json:"file.mtime,omitempty"`
+	FileType       string `json:"file.type,omitempty"`
+	FileExtension  string `json:"file.extension,omitempty"`
+
+	// ELF-specific fields can use custom fields
+	FileMimeType string                 `json:"file.mime_type,omitempty"`
+	FileELF      map[string]interface{} `json:"file.elf,omitempty"`
+	FilePackage  map[string]string      `json:"file.package,omitempty"`
+
 	// Correlation IDs
 	Labels map[string]string `json:"labels,omitempty"`
 }
@@ -633,6 +648,68 @@ func (f *ECSFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	if match.ProcessInfo != nil {
 		ecsEvent.Message += fmt.Sprintf(" - Process: %s [%d]",
 			match.ProcessInfo.Comm, match.ProcessInfo.PID)
+	}
+
+	return f.encoder.Encode(ecsEvent)
+}
+
+func (f *ECSFormatter) FormatBinary(binary *types.BinaryInfo) error {
+	ecsEvent := f.createBaseEvent()
+	ecsEvent.Type = "binary"
+	ecsEvent.Category = "file"
+	ecsEvent.Kind = "event"
+	ecsEvent.Action = "binary_observed"
+
+	// Set standard ECS file fields
+	ecsEvent.FilePath = binary.Path
+	ecsEvent.FileSize = binary.FileSize
+	ecsEvent.FileHashMD5 = binary.MD5Hash
+	ecsEvent.FileHashSHA256 = binary.SHA256Hash
+	ecsEvent.FileCreatedAt = binary.FirstSeen.Format(time.RFC3339Nano)
+	ecsEvent.FileModifiedAt = binary.ModTime.Format(time.RFC3339Nano)
+
+	// Create message
+	elfType := ""
+	if binary.IsELF {
+		elfType = binary.ELFType
+		ecsEvent.FileType = "elf"
+
+		// Add ELF-specific information
+		ecsEvent.FileELF = map[string]interface{}{
+			"type":                 binary.ELFType,
+			"architecture":         binary.Architecture,
+			"interpreter":          binary.Interpreter,
+			"is_statically_linked": binary.IsStaticallyLinked,
+			"has_debug_info":       binary.HasDebugInfo,
+			"import_count":         binary.ImportCount,
+			"export_count":         binary.ExportCount,
+			"imported_libraries":   binary.ImportedLibraries,
+		}
+
+		// Set appropriate mime type
+		if binary.ELFType == "executable" {
+			ecsEvent.FileMimeType = "application/x-executable"
+		} else if binary.ELFType == "shared object" {
+			ecsEvent.FileMimeType = "application/x-sharedlib"
+		}
+	}
+
+	// Add package information
+	if binary.IsFromPackage {
+		ecsEvent.FilePackage = map[string]string{
+			"name":    binary.PackageName,
+			"version": binary.PackageVersion,
+		}
+	}
+
+	// Set message
+	ecsEvent.Message = fmt.Sprintf("Binary observed: %s (%s %s)",
+		binary.Path, elfType, binary.Architecture)
+
+	// Set correlation IDs
+	ecsEvent.Labels = map[string]string{
+		"session_uid": f.sessionUID,
+		"binary_hash": binary.MD5Hash,
 	}
 
 	return f.encoder.Encode(ecsEvent)

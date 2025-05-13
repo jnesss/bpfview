@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/tursodatabase/limbo"
 
@@ -181,7 +182,34 @@ func initSchema(db *sql.DB) error {
 			event_data TEXT,
 			rule_references TEXT,
 			rule_tags TEXT,
-			status TEXT DEFAULT 'new');`,
+			status TEXT DEFAULT 'new'
+        );`,
+		`CREATE TABLE IF NOT EXISTS binary_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_uid TEXT NOT NULL,
+            timestamp DATETIME NOT NULL,
+            path TEXT NOT NULL,
+            md5_hash TEXT NOT NULL,
+            sha256_hash TEXT,
+            file_size INTEGER NOT NULL,
+            is_elf BOOLEAN DEFAULT 0,
+            elf_type TEXT,
+            architecture TEXT,
+            interpreter TEXT,
+            imported_libraries TEXT,
+            import_count INTEGER DEFAULT 0,
+            export_count INTEGER DEFAULT 0,
+            is_statically_linked BOOLEAN DEFAULT 0,
+            has_debug_info BOOLEAN DEFAULT 0,
+            is_from_package BOOLEAN DEFAULT 0,
+            package_name TEXT,
+            package_version TEXT,
+            process_uid TEXT,
+            pid INTEGER,
+            ppid INTEGER,
+            comm TEXT,
+            parent_comm TEXT
+        );`,
 	}
 
 	// Execute each table creation separately
@@ -478,6 +506,37 @@ func (f *SQLiteFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 		string(eventDataJSON),
 		string(referencesJSON),
 		string(tagsJSON))
+
+	return err
+}
+
+func (f *SQLiteFormatter) FormatBinary(binary *types.BinaryInfo) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Convert libraries array to JSON
+	var librariesJSON []byte
+	if len(binary.ImportedLibraries) > 0 {
+		librariesJSON, _ = json.Marshal(binary.ImportedLibraries)
+	} else {
+		librariesJSON = []byte("[]")
+	}
+
+	// Insert binary event
+	_, err := f.db.Exec(`
+        INSERT INTO binary_events (
+            session_uid, timestamp, path, md5_hash, sha256_hash, file_size,
+            is_elf, elf_type, architecture, interpreter, imported_libraries,
+            import_count, export_count, is_statically_linked, has_debug_info,
+            is_from_package, package_name, package_version,
+            process_uid, pid, ppid, comm, parent_comm
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+		f.sessionUID, time.Now(), binary.Path, binary.MD5Hash, binary.SHA256Hash, binary.FileSize,
+		binary.IsELF, binary.ELFType, binary.Architecture, binary.Interpreter, string(librariesJSON),
+		binary.ImportCount, binary.ExportCount, binary.IsStaticallyLinked, binary.HasDebugInfo,
+		binary.IsFromPackage, binary.PackageName, binary.PackageVersion,
+		binary.ProcessUID, binary.PID, binary.PPID, binary.Comm, binary.ParentComm)
 
 	return err
 }
