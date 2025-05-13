@@ -302,6 +302,51 @@ func main() {
 				}
 				defer globalBinaryAnalyzer.Close()
 
+				globalBinaryAnalyzer.SetNewBinaryCallback(func(metadata binaryanalyzer.BinaryMetadata) {
+					// Convert to BinaryInfo
+					binaryInfo := &types.BinaryInfo{
+						Path:               metadata.Path,
+						MD5Hash:            metadata.MD5Hash,
+						SHA256Hash:         metadata.SHA256Hash,
+						FileSize:           metadata.FileSize,
+						ModTime:            metadata.ModTime,
+						FirstSeen:          metadata.FirstSeen,
+						IsELF:              metadata.IsELF,
+						ELFType:            metadata.ELFType,
+						Architecture:       metadata.Architecture,
+						Interpreter:        metadata.Interpreter,
+						ImportedLibraries:  metadata.ImportedLibraries,
+						ImportCount:        metadata.ImportedSymbolCount,
+						ExportCount:        metadata.ExportedSymbolCount,
+						IsStaticallyLinked: metadata.IsStaticallyLinked,
+						HasDebugInfo:       metadata.HasDebugInfo,
+						// will add these next:
+						// IsFromPackage:      metadata.IsFromPackage,
+						// PackageName:        metadata.PackageName,
+						// PackageVersion:     metadata.PackageVersion,
+					}
+
+					// Report to formatter
+					formatter.FormatBinary(binaryInfo)
+
+					binarySeenTotal.Inc()
+					if metadata.IsELF {
+						binaryTypeCount.WithLabelValues(metadata.ELFType).Inc()
+						binaryArchCount.WithLabelValues(metadata.Architecture).Inc()
+					}
+					/* add this next:
+					if metadata.IsFromPackage {
+						binaryPackageCount.WithLabelValues(metadata.PackageName).Inc()
+					} else {
+						binaryPackageCount.WithLabelValues("unknown").Inc()
+					}
+					*/
+
+					// Log to console
+					globalLogger.Info("binary", "New binary detected: %s (%s %s)",
+						metadata.Path, metadata.ELFType, metadata.Architecture)
+				})
+
 				log.Printf("Binary analyzer initialized with database at %s",
 					filepath.Join(logDir, "binarymetadata.db"))
 			}
