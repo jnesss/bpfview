@@ -248,3 +248,37 @@ type SigmaMatch struct {
 	DetectionSource string // "dns_query" or "network_connection" or "process_creation"
 	ResponseActions []string
 }
+
+// BinaryInfo represents information about a binary file
+type BinaryInfo struct {
+	Path       string
+	MD5Hash    string
+	SHA256Hash string
+	FileSize   int64
+	ModTime    time.Time
+	FirstSeen  time.Time
+
+	// ELF-specific information
+	IsELF              bool
+	ELFType            string
+	Architecture       string
+	Interpreter        string
+	ImportedLibraries  []string
+	ImportCount        int
+	ExportCount        int
+	IsStaticallyLinked bool
+	Sections           []string
+	HasDebugInfo       bool
+
+	// Package information
+	IsFromPackage  bool
+	PackageName    string
+	PackageVersion string
+
+	// Process context
+	ProcessUID string
+	PID        uint32
+	PPID       uint32
+	Comm       string
+	ParentComm string
+}
