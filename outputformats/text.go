@@ -22,6 +22,7 @@ type TextFormatter struct {
 	tlsLog       *os.File
 	envLog       *os.File
 	sigmaLog     *os.File
+	binaryLog    *os.File
 	logDir       string
 	sessionUID   string
 	hostname     string
@@ -105,12 +106,24 @@ func (f *TextFormatter) Initialize() error {
 		return fmt.Errorf("failed to open environment log: %v", err)
 	}
 
+	// Open binary log file
+	f.binaryLog, err = os.OpenFile(
+		filepath.Join(f.logDir, "binary.log"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY,
+		0644,
+	)
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("failed to open binary log: %v", err)
+	}
+
 	// Write headers
 	f.writeProcessHeader()
 	f.writeNetworkHeader()
 	f.writeDNSHeader()
 	f.writeTLSHeader()
 	f.writeEnvHeader()
+	f.writeBinaryHeader()
 
 	// Only create sigma log if enabled
 	if f.sigmaEnabled {
@@ -145,6 +158,10 @@ func (f *TextFormatter) Close() error {
 	if f.envLog != nil {
 		f.envLog.Close()
 	}
+	if f.binaryLog != nil {
+		f.binaryLog.Close()
+	}
+
 	return nil
 }
 
@@ -166,6 +183,10 @@ func (f *TextFormatter) writeTLSHeader() {
 
 func (f *TextFormatter) writeEnvHeader() {
 	fmt.Fprintln(f.envLog, "timestamp|session_uid|process_uid|pid|comm|env_var")
+}
+
+func (f *TextFormatter) writeBinaryHeader() {
+	fmt.Fprintln(f.binaryLog, "timestamp|session_uid|process_uid|pid|comm|path|md5_hash|sha256_hash|file_size|is_elf|elf_type|architecture|interpreter|import_count|export_count|is_static|is_from_package|package_name")
 }
 
 func (f *TextFormatter) writeSigmaHeader() {
@@ -736,6 +757,48 @@ func (f *TextFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 	}
 
 	_, err := fmt.Fprintln(f.sigmaLog, strings.Join(values, "|"))
+	return err
+}
+
+func (f *TextFormatter) FormatBinary(binary *types.BinaryInfo) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	timestamp := time.Now().Format(time.RFC3339Nano)
+	isELF := "0"
+	if binary.IsELF {
+		isELF = "1"
+	}
+	isStatic := "0"
+	if binary.IsStaticallyLinked {
+		isStatic = "1"
+	}
+	isFromPackage := "0"
+	if binary.IsFromPackage {
+		isFromPackage = "1"
+	}
+
+	// Format basic fields
+	_, err := fmt.Fprintf(f.binaryLog, "%s|%s|%s|%d|%s|%s|%s|%s|%d|%s|%s|%s|%s|%d|%d|%s|%s|%s\n",
+		timestamp,
+		f.sessionUID,
+		binary.ProcessUID,
+		binary.PID,
+		binary.Comm,
+		binary.Path,
+		binary.MD5Hash,
+		binary.SHA256Hash,
+		binary.FileSize,
+		isELF,
+		binary.ELFType,
+		binary.Architecture,
+		binary.Interpreter,
+		binary.ImportCount,
+		binary.ExportCount,
+		isStatic,
+		isFromPackage,
+		binary.PackageName)
+
 	return err
 }
 

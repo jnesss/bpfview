@@ -12,4 +12,5 @@ type EventFormatter interface {
 	FormatDNS(event *types.UserSpaceDNSEvent, info *types.ProcessInfo) error
 	FormatTLS(event *types.UserSpaceTLSEvent, info *types.ProcessInfo) error
 	FormatSigmaMatch(match *types.SigmaMatch) error
+	FormatBinary(binary *types.BinaryInfo) error
 }

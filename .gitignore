@@ -1,0 +1,55 @@
+# Compiled binaries and executables
+/main
+/bpfview
+
+# Generated BPF files
+*.o
+
+# Database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+binarymetadata.db*
+
+# Log files
+/logs/
+*.log
+
+# Generated Go files from BPF
+*_bpfeb.go
+*_bpfel.go
+*.skel.go
+
+# IDE and editor specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test data and temp files
+/testdata/
+/tmp/
+*.tmp
+*.bak
+
+# Environment files
+.env
+.env.local
+.envrc
+
+# Dependency directories
+node_modules/
+
+# System
+.nfs*
+.fuse_hidden*
+
+# Debug info
+/debug
+/coverage.txt
+/profile.out
+/cpu.prof
+/mem.prof

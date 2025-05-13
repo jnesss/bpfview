@@ -12,8 +12,9 @@ import (
 
 // analyzerImpl implements the BinaryAnalyzer interface
 type analyzerImpl struct {
-	db     *sql.DB
-	logger Logger
+	db                *sql.DB
+	logger            Logger
+	newBinaryCallback func(BinaryMetadata)
 }
 
 // Ensure implementation satisfies interface
@@ -174,6 +175,32 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 			return
 		}
 		a.logger.Info("binary", "Inserted new binary %s: MD5=%s", path, md5Hash)
+
+		if a.newBinaryCallback != nil {
+			// Create metadata object from our findings
+			metadata := BinaryMetadata{
+				Path:                path,
+				MD5Hash:             md5Hash,
+				SHA256Hash:          sha256Hash,
+				FileSize:            fileInfo.Size(),
+				ModTime:             fileInfo.ModTime(),
+				FirstSeen:           now,
+				IsELF:               isELF,
+				ELFType:             elfInfoValue(elfInfo, "Type").(string),
+				Architecture:        elfInfoValue(elfInfo, "Architecture").(string),
+				Interpreter:         elfInfoValue(elfInfo, "Interpreter").(string),
+				ImportedLibraries:   elfInfo.ImportedLibraries,
+				ImportedSymbolCount: importedSymbolCount,
+				ExportedSymbolCount: exportedSymbolCount,
+				IsStaticallyLinked:  elfInfoBool(elfInfo, "IsStaticallyLinked"),
+				HasDebugInfo:        elfInfoBool(elfInfo, "HasDebugInfo"),
+				// Add package info when implemented
+			}
+
+			// Call the callback with metadata
+			a.newBinaryCallback(metadata)
+		}
+
 	} else {
 		// Perform UPDATE
 		_, err = a.db.Exec(`
@@ -386,6 +413,11 @@ func (a *analyzerImpl) GetMetadataByPath(path string) (BinaryMetadata, bool) {
 	}
 
 	return metadata, true
+}
+
+// Implement the SetNewBinaryCallback method
+func (a *analyzerImpl) SetNewBinaryCallback(callback func(BinaryMetadata)) {
+	a.newBinaryCallback = callback
 }
 
 // Close closes the database connection

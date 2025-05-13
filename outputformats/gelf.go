@@ -104,6 +104,30 @@ type gelfMessage struct {
 	TLSCipherSuites []string `json:"_tls_cipher_suites,omitempty"`
 	TLSJa4          string   `json:"_tls_ja4,omitempty"`
 	TLSJa4Hash      string   `json:"_tls_ja4_hash,omitempty"`
+
+	// Binary-specific fields (all custom fields must have _ prefix)
+	BinaryPath      string `json:"_binary_path,omitempty"`
+	BinaryMd5       string `json:"_binary_md5,omitempty"`
+	BinarySha256    string `json:"_binary_sha256,omitempty"`
+	BinarySize      int64  `json:"_binary_size,omitempty"`
+	BinaryFirstSeen string `json:"_binary_first_seen,omitempty"`
+	BinaryModTime   string `json:"_binary_mod_time,omitempty"`
+
+	// ELF-specific fields
+	BinaryIsElf             bool   `json:"_binary_is_elf,omitempty"`
+	BinaryElfType           string `json:"_binary_elf_type,omitempty"`
+	BinaryArchitecture      string `json:"_binary_architecture,omitempty"`
+	BinaryInterpreter       string `json:"_binary_interpreter,omitempty"`
+	BinaryImportCount       int    `json:"_binary_import_count,omitempty"`
+	BinaryExportCount       int    `json:"_binary_export_count,omitempty"`
+	BinaryStaticallyLinked  bool   `json:"_binary_statically_linked,omitempty"`
+	BinaryHasDebugInfo      bool   `json:"_binary_has_debug_info,omitempty"`
+	BinaryImportedLibraries string `json:"_binary_imported_libraries,omitempty"` // JSON-encoded
+
+	// Package information
+	BinaryFromPackage    bool   `json:"_binary_from_package,omitempty"`
+	BinaryPackageName    string `json:"_binary_package_name,omitempty"`
+	BinaryPackageVersion string `json:"_binary_package_version,omitempty"`
 }
 
 func NewGELFFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *GELFFormatter {
@@ -582,6 +606,104 @@ func (f *GELFFormatter) FormatSigmaMatch(match *types.SigmaMatch) error {
 
 	msg.FullMessage = fullMsg.String()
 	msg.TimestampHuman = match.Timestamp.UTC().Format(time.RFC3339Nano)
+
+	return f.encoder.Encode(msg)
+}
+
+func (f *GELFFormatter) FormatBinary(binary *types.BinaryInfo) error {
+	msg := gelfMessage{
+		Version:        "1.1",
+		Host:           f.getHostname(),
+		Level:          6, // Info level
+		Timestamp:      float64(time.Now().Unix()) + float64(time.Now().Nanosecond())/1000000000,
+		TimestampHuman: time.Now().UTC().Format(time.RFC3339Nano),
+		EventType:      "binary_seen",
+		SessionUID:     f.sessionUID,
+	}
+
+	// Create message content
+	elfType := ""
+	if binary.IsELF {
+		elfType = binary.ELFType + " "
+	}
+
+	msg.ShortMessage = fmt.Sprintf("Binary observed: %s (%s%s)",
+		binary.Path, elfType, binary.Architecture)
+
+	// Add basic binary fields (GELF requires _ prefix for custom fields)
+	msg.BinaryPath = binary.Path
+	msg.BinaryMd5 = binary.MD5Hash
+	msg.BinarySha256 = binary.SHA256Hash
+	msg.BinarySize = binary.FileSize
+	msg.BinaryFirstSeen = binary.FirstSeen.Format(time.RFC3339Nano)
+	msg.BinaryModTime = binary.ModTime.Format(time.RFC3339Nano)
+
+	// Add ELF information
+	if binary.IsELF {
+		msg.BinaryIsElf = true
+		msg.BinaryElfType = binary.ELFType
+		msg.BinaryArchitecture = binary.Architecture
+		msg.BinaryInterpreter = binary.Interpreter
+		msg.BinaryImportCount = binary.ImportCount
+		msg.BinaryExportCount = binary.ExportCount
+		msg.BinaryStaticallyLinked = binary.IsStaticallyLinked
+		msg.BinaryHasDebugInfo = binary.HasDebugInfo
+
+		// Libraries need to be JSON-encoded
+		if len(binary.ImportedLibraries) > 0 {
+			librariesJSON, _ := json.Marshal(binary.ImportedLibraries)
+			msg.BinaryImportedLibraries = string(librariesJSON)
+		}
+	}
+
+	// Add package information
+	if binary.IsFromPackage {
+		msg.BinaryFromPackage = true
+		msg.BinaryPackageName = binary.PackageName
+		msg.BinaryPackageVersion = binary.PackageVersion
+	}
+
+	// Create detailed full message
+	var fullMsg strings.Builder
+	fullMsg.WriteString(msg.ShortMessage)
+	fullMsg.WriteString("\n\n")
+	fullMsg.WriteString(fmt.Sprintf("Binary Details:\n"))
+	fullMsg.WriteString(fmt.Sprintf("Path: %s\n", binary.Path))
+	fullMsg.WriteString(fmt.Sprintf("MD5: %s\n", binary.MD5Hash))
+	if binary.SHA256Hash != "" {
+		fullMsg.WriteString(fmt.Sprintf("SHA256: %s\n", binary.SHA256Hash))
+	}
+	fullMsg.WriteString(fmt.Sprintf("Size: %d bytes\n", binary.FileSize))
+	fullMsg.WriteString(fmt.Sprintf("Modified: %s\n", binary.ModTime.Format(time.RFC3339)))
+	fullMsg.WriteString(fmt.Sprintf("First Seen: %s\n", binary.FirstSeen.Format(time.RFC3339)))
+
+	if binary.IsELF {
+		fullMsg.WriteString(fmt.Sprintf("\nELF Information:\n"))
+		fullMsg.WriteString(fmt.Sprintf("Type: %s\n", binary.ELFType))
+		fullMsg.WriteString(fmt.Sprintf("Architecture: %s\n", binary.Architecture))
+		if binary.Interpreter != "" {
+			fullMsg.WriteString(fmt.Sprintf("Interpreter: %s\n", binary.Interpreter))
+		}
+		fullMsg.WriteString(fmt.Sprintf("Import Count: %d\n", binary.ImportCount))
+		fullMsg.WriteString(fmt.Sprintf("Export Count: %d\n", binary.ExportCount))
+		fullMsg.WriteString(fmt.Sprintf("Statically Linked: %v\n", binary.IsStaticallyLinked))
+		fullMsg.WriteString(fmt.Sprintf("Debug Info: %v\n", binary.HasDebugInfo))
+
+		if len(binary.ImportedLibraries) > 0 {
+			fullMsg.WriteString("\nImported Libraries:\n")
+			for i, lib := range binary.ImportedLibraries {
+				fullMsg.WriteString(fmt.Sprintf("  %d. %s\n", i+1, lib))
+			}
+		}
+	}
+
+	if binary.IsFromPackage {
+		fullMsg.WriteString(fmt.Sprintf("\nPackage Information:\n"))
+		fullMsg.WriteString(fmt.Sprintf("Package: %s\n", binary.PackageName))
+		fullMsg.WriteString(fmt.Sprintf("Version: %s\n", binary.PackageVersion))
+	}
+
+	msg.FullMessage = fullMsg.String()
 
 	return f.encoder.Encode(msg)
 }
