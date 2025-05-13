@@ -47,6 +47,34 @@ var (
 		},
 		[]string{"event_type", "operation", "result"},
 	)
+
+	// Binary metrics
+	binarySeenTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "bpfview_binary_seen_total",
+			Help: "Total number of unique binaries seen",
+		})
+
+	binaryTypeCount = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_binary_type_count",
+			Help: "Number of binaries by type",
+		},
+		[]string{"elf_type"})
+
+	binaryArchCount = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_binary_arch_count",
+			Help: "Number of binaries by architecture",
+		},
+		[]string{"architecture"})
+
+	binaryPackageCount = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bpfview_binary_package_count",
+			Help: "Number of binaries by package source",
+		},
+		[]string{"package"})
 )
 
 // Proc reads counter
