@@ -16,6 +16,9 @@ type BinaryAnalyzer interface {
 	// Get metadata for a binary by path
 	GetMetadataByPath(path string) (BinaryMetadata, bool)
 
+	// Set a callback function that will be called when a new binary is analyzed
+	SetNewBinaryCallback(func(BinaryMetadata))
+
 	// Close and clean up resources
 	Close() error
 }
