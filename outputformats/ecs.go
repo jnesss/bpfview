@@ -147,6 +147,12 @@ type ecsEvent struct {
 	FileELF      map[string]interface{} `json:"file.elf,omitempty"`
 	FilePackage  map[string]string      `json:"file.package,omitempty"`
 
+	// Package info (using ECS "package" namespace)
+	PackageName     string `json:"package.name,omitempty"`
+	PackageVersion  string `json:"package.version,omitempty"`
+	PackageType     string `json:"package.type,omitempty"` // rpm, deb, etc.
+	PackageVerified bool   `json:"package.verified,omitempty"`
+
 	// Correlation IDs
 	Labels map[string]string `json:"labels,omitempty"`
 }
@@ -258,6 +264,13 @@ func (f *ECSFormatter) FormatProcess(event *types.ProcessEvent, info *types.Proc
 		if !info.StartTime.IsZero() {
 			ecsEvent.ProcessDuration = info.ExitTime.Sub(info.StartTime).String()
 		}
+	}
+
+	if info.PackageName != "" || info.IsFromPackage {
+		ecsEvent.PackageName = info.PackageName
+		ecsEvent.PackageVersion = info.PackageVersion
+		ecsEvent.PackageType = info.PackageManager
+		ecsEvent.PackageVerified = info.PackageVerified
 	}
 
 	var fingerprint string
@@ -694,17 +707,25 @@ func (f *ECSFormatter) FormatBinary(binary *types.BinaryInfo) error {
 		}
 	}
 
-	// Add package information
+	pkgInfo := ""
 	if binary.IsFromPackage {
 		ecsEvent.FilePackage = map[string]string{
-			"name":    binary.PackageName,
-			"version": binary.PackageVersion,
+			"name":     binary.PackageName,
+			"version":  binary.PackageVersion,
+			"manager":  binary.PackageManager,
+			"verified": fmt.Sprintf("%t", binary.PackageVerified),
 		}
+		if binary.PackageVerified {
+			pkgInfo = fmt.Sprintf(" (package: %s)", binary.PackageName)
+		} else {
+			pkgInfo = fmt.Sprintf(" (modified package: %s)", binary.PackageName)
+		}
+
 	}
 
 	// Set message
-	ecsEvent.Message = fmt.Sprintf("Binary observed: %s (%s %s)",
-		binary.Path, elfType, binary.Architecture)
+	ecsEvent.Message = fmt.Sprintf("Binary observed: %s (%s %s)%s",
+		binary.Path, elfType, binary.Architecture, pkgInfo)
 
 	// Set correlation IDs
 	ecsEvent.Labels = map[string]string{
