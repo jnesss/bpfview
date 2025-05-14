@@ -21,6 +21,7 @@ type FilterConfig struct {
 	BinaryHashes    []string
 	TrackTree       bool
 	HashBinaries    bool
+	PackageVerify   bool
 
 	// Process exclusions
 	ExcludeComm      []string
