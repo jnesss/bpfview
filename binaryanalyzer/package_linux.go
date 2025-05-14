@@ -87,12 +87,12 @@ func (r *rpmVerifier) Verify(path string) (PackageInfo, error) {
 
 		// For debugging, log why verification failed
 		if !info.Verified && len(verifyOutput) > 0 {
-			// Parse the verification output to provide more details
-			// Format is like: S.5....T c /usr/bin/example
-			// Where S=size, M=mode, 5=MD5, etc.
 			// outputStr := strings.TrimSpace(string(verifyOutput))
-			// This would be a good place to add detailed logging
+			// Example parsing: "S.5....T c /usr/bin/example"
+			// S = size differs, M = mode differs, 5 = MD5 sum differs, etc.
+			// logger.Debug("binary", "Verification failed for %s: %s", path, outputStr)
 		}
+
 	}
 
 	return info, nil
