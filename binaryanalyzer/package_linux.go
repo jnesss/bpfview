@@ -5,15 +5,14 @@ package binaryanalyzer
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
