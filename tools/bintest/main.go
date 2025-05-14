@@ -81,6 +81,18 @@ func main() {
 	fmt.Printf("MD5 Hash:    %s\n", metadata.MD5Hash)
 	fmt.Printf("SHA256 Hash: %s\n", metadata.SHA256Hash)
 
+	// Display package information
+	fmt.Println("\n=== Package Information ===")
+	if metadata.IsFromPackage {
+		fmt.Printf("Package:       %s\n", metadata.PackageName)
+		fmt.Printf("Version:       %s\n", metadata.PackageVersion)
+		fmt.Printf("Manager:       %s\n", metadata.PackageManager)
+		fmt.Printf("From Package:  %v\n", metadata.IsFromPackage)
+		fmt.Printf("Verified:      %v\n", metadata.PackageVerified)
+	} else {
+		fmt.Println("This binary is not part of any system package")
+	}
+
 	// Display ELF information if available
 	if metadata.IsELF {
 		fmt.Println("\n=== ELF Analysis ===")

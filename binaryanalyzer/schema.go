@@ -28,6 +28,13 @@ func initBinarySchema(db *sql.DB) error {
         sections TEXT, -- JSON array
         has_debug_info BOOLEAN DEFAULT 0,
         
+        -- Package information
+        is_from_package BOOLEAN DEFAULT 0,
+        package_name TEXT,
+        package_version TEXT,
+        package_verified BOOLEAN DEFAULT 0,
+        package_manager TEXT,
+        
         analyzed BOOLEAN DEFAULT 0
     );
 

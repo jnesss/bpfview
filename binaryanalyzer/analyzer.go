@@ -108,6 +108,30 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 		}
 	}
 
+	// Package verification
+	var isFromPackage bool
+	var packageName, packageVersion, packageManager string
+	var packageVerified bool
+
+	verifier := CreatePackageVerifier()
+	if verifier != nil && verifier.IsAvailable() {
+		packageInfo, err := verifier.Verify(path)
+		if err == nil {
+			isFromPackage = packageInfo.IsFromPackage
+			packageName = packageInfo.PackageName
+			packageVersion = packageInfo.PackageVersion
+			packageVerified = packageInfo.Verified
+			packageManager = packageInfo.Manager
+
+			if isFromPackage {
+				a.logger.Info("binary", "Package verification: %s belongs to %s (%s), verified: %v",
+					path, packageName, packageVersion, packageVerified)
+			} else {
+				a.logger.Info("binary", "Binary %s is not part of any system package", path)
+			}
+		}
+	}
+
 	// Convert arrays to JSON for storage
 	var librariesJSON, sectionsJSON string
 	// Get symbol counts for storage
@@ -155,8 +179,9 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
                 is_elf, elf_type, architecture, interpreter, 
                 imported_libraries, imported_symbols_count, exported_symbols_count,
                 is_statically_linked, sections, has_debug_info,
+                is_from_package, package_name, package_version, package_verified, package_manager,
                 analyzed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         `,
 			path, md5Hash, sha256Hash, fileInfo.Size(), fileInfo.ModTime(), now,
 			isELF,
@@ -164,11 +189,16 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 			elfInfoValue(elfInfo, "Architecture"),
 			elfInfoValue(elfInfo, "Interpreter"),
 			librariesJSON,
-			importedSymbolCount, // Use explicit variable for clarity
-			exportedSymbolCount, // Use explicit variable for clarity
+			importedSymbolCount,
+			exportedSymbolCount,
 			elfInfoBool(elfInfo, "IsStaticallyLinked"),
 			sectionsJSON,
-			elfInfoBool(elfInfo, "HasDebugInfo"))
+			elfInfoBool(elfInfo, "HasDebugInfo"),
+			isFromPackage,
+			packageName,
+			packageVersion,
+			packageVerified,
+			packageManager)
 
 		if err != nil {
 			a.logger.Error("binary", "Failed to insert binary %s: %v", path, err)
@@ -194,7 +224,11 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 				ExportedSymbolCount: exportedSymbolCount,
 				IsStaticallyLinked:  elfInfoBool(elfInfo, "IsStaticallyLinked"),
 				HasDebugInfo:        elfInfoBool(elfInfo, "HasDebugInfo"),
-				// Add package info when implemented
+				IsFromPackage:       isFromPackage,
+				PackageName:         packageName,
+				PackageVersion:      packageVersion,
+				PackageVerified:     packageVerified,
+				PackageManager:      packageManager,
 			}
 
 			// Call the callback with metadata
@@ -215,6 +249,11 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
                 is_statically_linked = CASE WHEN ? THEN ? ELSE is_statically_linked END,
                 sections = CASE WHEN ? THEN ? ELSE sections END,
                 has_debug_info = CASE WHEN ? THEN ? ELSE has_debug_info END,
+                is_from_package = ?,
+                package_name = ?,
+                package_version = ?,
+                package_verified = ?,
+                package_manager = ?,
                 analyzed = 1
             WHERE md5_hash = ?
         `,
@@ -223,11 +262,16 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 			isELF, elfInfoValue(elfInfo, "Architecture"),
 			isELF, elfInfoValue(elfInfo, "Interpreter"),
 			isELF, librariesJSON,
-			isELF, importedSymbolCount, // Use explicit variable
-			isELF, exportedSymbolCount, // Use explicit variable
+			isELF, importedSymbolCount,
+			isELF, exportedSymbolCount,
 			isELF, elfInfoBool(elfInfo, "IsStaticallyLinked"),
 			isELF, sectionsJSON,
 			isELF, elfInfoBool(elfInfo, "HasDebugInfo"),
+			isFromPackage,
+			packageName,
+			packageVersion,
+			packageVerified,
+			packageManager,
 			md5Hash)
 
 		if err != nil {
@@ -321,15 +365,16 @@ func (a *analyzerImpl) GetMetadataByHash(hash string) (BinaryMetadata, bool) {
 func (a *analyzerImpl) GetMetadataByPath(path string) (BinaryMetadata, bool) {
 	var metadata BinaryMetadata
 	var importedLibrariesJSON, sectionsJSON sql.NullString
-	var isELF, isStaticallyLinked, hasDebugInfo sql.NullBool
-	var elfType, architecture, interpreter sql.NullString
+	var isELF, isStaticallyLinked, hasDebugInfo, isFromPackage, packageVerified sql.NullBool
+	var elfType, architecture, interpreter, packageName, packageVersion, packageManager sql.NullString
 	var importSymCount, exportSymCount sql.NullInt64
 
 	err := a.db.QueryRow(`
         SELECT md5_hash, sha256_hash, file_size, mod_time, first_seen,
                is_elf, elf_type, architecture, interpreter, 
                imported_libraries, imported_symbols_count, exported_symbols_count,
-               is_statically_linked, sections, has_debug_info
+               is_statically_linked, sections, has_debug_info,
+               is_from_package, package_name, package_version, package_verified, package_manager
         FROM binaries
         WHERE path = ?
     `, path).Scan(
@@ -348,6 +393,11 @@ func (a *analyzerImpl) GetMetadataByPath(path string) (BinaryMetadata, bool) {
 		&isStaticallyLinked,
 		&sectionsJSON,
 		&hasDebugInfo,
+		&isFromPackage,
+		&packageName,
+		&packageVersion,
+		&packageVerified,
+		&packageManager,
 	)
 	if err != nil {
 		a.logger.Error("binary", "Error retrieving metadata for %s: %v", path, err)
@@ -410,6 +460,23 @@ func (a *analyzerImpl) GetMetadataByPath(path string) (BinaryMetadata, bool) {
 	} else {
 		a.logger.Debug("binary", "Retrieved non-ELF binary info for %s", path)
 		metadata.IsELF = false
+	}
+
+	// Set package information
+	if isFromPackage.Valid {
+		metadata.IsFromPackage = isFromPackage.Bool
+	}
+	if packageName.Valid {
+		metadata.PackageName = packageName.String
+	}
+	if packageVersion.Valid {
+		metadata.PackageVersion = packageVersion.String
+	}
+	if packageVerified.Valid {
+		metadata.PackageVerified = packageVerified.Bool
+	}
+	if packageManager.Valid {
+		metadata.PackageManager = packageManager.String
 	}
 
 	return metadata, true
