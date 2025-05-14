@@ -172,6 +172,31 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 
 	// If the record doesn't exist or there was an error (no rows), insert it
 	if err == sql.ErrNoRows || !exists {
+
+		// Package verification
+		var isFromPackage bool
+		var packageName, packageVersion, packageManager string
+		var packageVerified bool
+
+		verifier := CreatePackageVerifier()
+		if verifier != nil && verifier.IsAvailable() {
+			packageInfo, err := verifier.Verify(path)
+			if err == nil {
+				isFromPackage = packageInfo.IsFromPackage
+				packageName = packageInfo.PackageName
+				packageVersion = packageInfo.PackageVersion
+				packageVerified = packageInfo.Verified
+				packageManager = packageInfo.Manager
+
+				if isFromPackage {
+					a.logger.Info("binary", "Package verification: %s belongs to %s (%s), verified: %v",
+						path, packageName, packageVersion, packageVerified)
+				} else {
+					a.logger.Info("binary", "Binary %s is not part of any system package", path)
+				}
+			}
+		}
+
 		// Perform INSERT
 		_, err = a.db.Exec(`
             INSERT INTO binaries (
