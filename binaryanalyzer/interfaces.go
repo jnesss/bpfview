@@ -49,11 +49,18 @@ type BinaryMetadata struct {
 	Sections           []string // Section names
 	HasDebugInfo       bool     // Whether the binary contains debug info
 
+	// Package information
+	IsFromPackage   bool   // Whether this binary belongs to a package
+	PackageName     string // Name of the package
+	PackageVersion  string // Version of the package
+	PackageVerified bool   // Whether the binary matches the package
+	PackageManager  string // Which package manager (rpm, dpkg, etc.)
+
 	// For future vector embeddings and similarity search
 	// TODO: Add vector embedding field for binary similarity search
 	// VectorEmbedding []float32 // Feature vector for similarity search
-	// SimilarityScore float32    // Similarity score to most similar known binary
-	// SimilarBinaryHash string   // Hash of the most similar binary
+	// SimilarityScore float32   // Similarity score to most similar known binary
+	// SimilarBinaryHash string  // Hash of the most similar binary
 }
 
 // Config for the binary analyzer
