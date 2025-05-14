@@ -49,16 +49,12 @@ func (r *rpmVerifier) Verify(path string) (PackageInfo, error) {
 		Manager: "rpm",
 	}
 
-	// We still need exec.Command for RPM, but we'll make it safe as possible
-	// Create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Execute rpm command with separate arguments (no shell expansion)
 	cmd := exec.CommandContext(ctx, "rpm", "-qf", path, "--queryformat", "%{NAME}|%{VERSION}-%{RELEASE}")
 	output, err := cmd.CombinedOutput()
 
-	// Check for timeout or other errors
 	if ctx.Err() == context.DeadlineExceeded {
 		return info, fmt.Errorf("rpm command timed out: %w", ctx.Err())
 	}
@@ -74,22 +70,28 @@ func (r *rpmVerifier) Verify(path string) (PackageInfo, error) {
 		info.PackageName = parts[0]
 		info.PackageVersion = parts[1]
 
-		// Verify file integrity more safely
 		verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer verifyCancel()
 
 		// Use specific verification arguments to check only this file
-		verifyCmd := exec.CommandContext(verifyCtx, "rpm", "-V", "--nodeps", "--nofiles", "--nodigest", "--noscripts", path)
+		verifyCmd := exec.CommandContext(verifyCtx, "rpm", "-V", "--nodeps", "-f", path)
 		verifyOutput, verifyErr := verifyCmd.CombinedOutput()
 
-		// If no output or no errors, the file is verified
 		if verifyCtx.Err() == context.DeadlineExceeded {
-			// Handle timeout by marking as unverified rather than erroring
 			info.Verified = false
-		} else if verifyErr != nil || strings.Contains(string(verifyOutput), "5") {
-			info.Verified = false
-		} else {
-			info.Verified = true
+			return info, nil
+		}
+
+		// rpm -V returns nothing when verification succeeds
+		info.Verified = len(verifyOutput) == 0 && verifyErr == nil
+
+		// For debugging, log why verification failed
+		if !info.Verified && len(verifyOutput) > 0 {
+			// Parse the verification output to provide more details
+			// Format is like: S.5....T c /usr/bin/example
+			// Where S=size, M=mode, 5=MD5, etc.
+			// outputStr := strings.TrimSpace(string(verifyOutput))
+			// This would be a good place to add detailed logging
 		}
 	}
 
