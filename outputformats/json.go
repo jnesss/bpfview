@@ -53,6 +53,13 @@ type ProcessJSON struct {
 		ExitDescription string `json:"exit_description,omitempty"`
 		Duration        string `json:"duration,omitempty"`
 	} `json:"process"`
+	Package struct {
+		Name     string `json:"name,omitempty"`
+		Version  string `json:"version,omitempty"`
+		Manager  string `json:"manager,omitempty"`
+		FromPkg  bool   `json:"from_package"`
+		Verified bool   `json:"verified"`
+	} `json:"package,omitempty"`
 	ContainerID string `json:"container_id,omitempty"`
 	Message     string `json:"message,omitempty"`
 }
@@ -257,6 +264,8 @@ type BinaryJSON struct {
 		IsFromPackage      bool     `json:"is_from_package"`
 		PackageName        string   `json:"package_name,omitempty"`
 		PackageVersion     string   `json:"package_version,omitempty"`
+		PackageVerified    bool     `json:"package_verified"`
+		PackageManager     string   `json:"package_manager,omitempty"`
 	} `json:"binary"`
 	Message string `json:"message"`
 }
@@ -361,6 +370,14 @@ func (f *JSONFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 	}
 
 	jsonEvent.ContainerID = info.ContainerID
+
+	if info.IsFromPackage || info.PackageName != "" {
+		jsonEvent.Package.Name = info.PackageName
+		jsonEvent.Package.Version = info.PackageVersion
+		jsonEvent.Package.Manager = info.PackageManager
+		jsonEvent.Package.FromPkg = info.IsFromPackage
+		jsonEvent.Package.Verified = info.PackageVerified
+	}
 
 	return f.encoder.Encode(jsonEvent)
 }
@@ -781,6 +798,8 @@ func (f *JSONFormatter) FormatBinary(binary *types.BinaryInfo) error {
 	jsonEvent.Binary.IsFromPackage = binary.IsFromPackage
 	jsonEvent.Binary.PackageName = binary.PackageName
 	jsonEvent.Binary.PackageVersion = binary.PackageVersion
+	jsonEvent.Binary.PackageVerified = binary.PackageVerified
+	jsonEvent.Binary.PackageManager = binary.PackageManager
 
 	// Create message
 	elfType := ""
@@ -788,10 +807,20 @@ func (f *JSONFormatter) FormatBinary(binary *types.BinaryInfo) error {
 		elfType = binary.ELFType + " "
 	}
 
-	jsonEvent.Message = fmt.Sprintf("New binary: %s (%s%s)",
+	pkgInfo := ""
+	if binary.IsFromPackage {
+		pkgInfo = fmt.Sprintf(" (Package: %s %s", binary.PackageName, binary.PackageVersion)
+		if !binary.PackageVerified {
+			pkgInfo += " [MODIFIED]"
+		}
+		pkgInfo += ")"
+	}
+
+	jsonEvent.Message = fmt.Sprintf("New binary: %s (%s%s)%s",
 		binary.Path,
 		elfType,
-		binary.Architecture)
+		binary.Architecture,
+		pkgInfo)
 
 	return f.encoder.Encode(jsonEvent)
 }

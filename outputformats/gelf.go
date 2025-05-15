@@ -68,6 +68,13 @@ type gelfMessage struct {
 	ProcessDuration string `json:"_process_duration,omitempty"`
 	BinaryHash      string `json:"_binary_hash,omitempty"`
 
+	// Package information for process
+	PackageName     string `json:"_package_name,omitempty"`
+	PackageVersion  string `json:"_package_version,omitempty"`
+	PackageManager  string `json:"_package_manager,omitempty"`
+	IsFromPackage   bool   `json:"_is_from_package,omitempty"`
+	PackageVerified bool   `json:"_package_verified,omitempty"`
+
 	// Network-specific fields
 	Protocol             string `json:"_protocol,omitempty"`
 	SourceIP             string `json:"_source_ip,omitempty"`
@@ -124,10 +131,12 @@ type gelfMessage struct {
 	BinaryHasDebugInfo      bool   `json:"_binary_has_debug_info,omitempty"`
 	BinaryImportedLibraries string `json:"_binary_imported_libraries,omitempty"` // JSON-encoded
 
-	// Package information
-	BinaryFromPackage    bool   `json:"_binary_from_package,omitempty"`
-	BinaryPackageName    string `json:"_binary_package_name,omitempty"`
-	BinaryPackageVersion string `json:"_binary_package_version,omitempty"`
+	// Package information for new binary message
+	BinaryFromPackage     bool   `json:"_binary_from_package,omitempty"`
+	BinaryPackageName     string `json:"_binary_package_name,omitempty"`
+	BinaryPackageVersion  string `json:"_binary_package_version,omitempty"`
+	BinaryPackageVerified bool   `json:"_binary_package_verified,omitempty"`
+	BinaryPackageManager  string `json:"_binary_package_manager,omitempty"`
 }
 
 func NewGELFFormatter(output io.Writer, hostname, hostIP, sessionUID string, enableSigma bool) *GELFFormatter {
@@ -206,6 +215,14 @@ func (f *GELFFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 	msg.WorkingDir = info.WorkingDir
 	msg.ContainerID = info.ContainerID
 	msg.BinaryHash = info.BinaryHash
+
+	if info.PackageName != "" || info.IsFromPackage {
+		msg.PackageName = info.PackageName
+		msg.PackageVersion = info.PackageVersion
+		msg.PackageManager = info.PackageManager
+		msg.IsFromPackage = info.IsFromPackage
+		msg.PackageVerified = info.PackageVerified
+	}
 
 	msg.ShortMessage = fmt.Sprintf("%s: %s (PID: %d)", eventType, msg.ProcessName, msg.ProcessID)
 
@@ -627,9 +644,6 @@ func (f *GELFFormatter) FormatBinary(binary *types.BinaryInfo) error {
 		elfType = binary.ELFType + " "
 	}
 
-	msg.ShortMessage = fmt.Sprintf("Binary observed: %s (%s%s)",
-		binary.Path, elfType, binary.Architecture)
-
 	// Add basic binary fields (GELF requires _ prefix for custom fields)
 	msg.BinaryPath = binary.Path
 	msg.BinaryMd5 = binary.MD5Hash
@@ -657,11 +671,26 @@ func (f *GELFFormatter) FormatBinary(binary *types.BinaryInfo) error {
 	}
 
 	// Add package information
+	pkgInfo := ""
 	if binary.IsFromPackage {
 		msg.BinaryFromPackage = true
 		msg.BinaryPackageName = binary.PackageName
 		msg.BinaryPackageVersion = binary.PackageVersion
+		msg.BinaryPackageVerified = binary.PackageVerified
+		msg.BinaryPackageManager = binary.PackageManager
+
+		pkgInfo = fmt.Sprintf(" (Package: %s %s", binary.PackageName, binary.PackageVersion)
+		if !binary.PackageVerified {
+			pkgInfo += " [MODIFIED]"
+		}
+		pkgInfo += ")"
 	}
+
+	msg.ShortMessage = fmt.Sprintf("Binary observed: %s (%s%s)%s",
+		binary.Path,
+		elfType,
+		binary.Architecture,
+		pkgInfo)
 
 	// Create detailed full message
 	var fullMsg strings.Builder
@@ -701,6 +730,11 @@ func (f *GELFFormatter) FormatBinary(binary *types.BinaryInfo) error {
 		fullMsg.WriteString(fmt.Sprintf("\nPackage Information:\n"))
 		fullMsg.WriteString(fmt.Sprintf("Package: %s\n", binary.PackageName))
 		fullMsg.WriteString(fmt.Sprintf("Version: %s\n", binary.PackageVersion))
+		fullMsg.WriteString(fmt.Sprintf("Manager: %s\n", binary.PackageManager))
+		fullMsg.WriteString(fmt.Sprintf("Verified: %v\n", binary.PackageVerified))
+		if !binary.PackageVerified {
+			fullMsg.WriteString("*** BINARY MODIFIED FROM PACKAGE ***\n")
+		}
 	}
 
 	msg.FullMessage = fullMsg.String()

@@ -66,31 +66,37 @@ func initSchema(db *sql.DB) error {
 	// Create tables separately with error checking
 	tables := []string{
 		`CREATE TABLE IF NOT EXISTS processes (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_uid TEXT NOT NULL,
-			process_uid TEXT NOT NULL,
-			event_type TEXT NOT NULL,
-			fingerprint TEXT NOT NULL,
-			parent_uid TEXT,
-			timestamp DATETIME NOT NULL,
-			pid INTEGER NOT NULL,
-			ppid INTEGER NOT NULL,
-			comm TEXT NOT NULL,
-			cmdline TEXT,
-			exe_path TEXT,
-			working_dir TEXT,
-			username TEXT,
-			parent_comm TEXT,
-			container_id TEXT,
-			uid INTEGER,
-			gid INTEGER,
-			binary_hash TEXT,
-			environment TEXT,
-			exit_code INTEGER,
-			exit_time DATETIME,
-			-- Vector embedding columns
-			proc_embedding F32_BLOB(64),  -- Process behavior embedding
-			context_embedding F32_BLOB(32) -- Contextual embedding
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_uid TEXT NOT NULL,
+            process_uid TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            parent_uid TEXT,
+            timestamp DATETIME NOT NULL,
+            pid INTEGER NOT NULL,
+            ppid INTEGER NOT NULL,
+            comm TEXT NOT NULL,
+            cmdline TEXT,
+            exe_path TEXT,
+            working_dir TEXT,
+            username TEXT,
+            parent_comm TEXT,
+            container_id TEXT,
+            uid INTEGER,
+            gid INTEGER,
+            binary_hash TEXT,
+            environment TEXT,
+            exit_code INTEGER,
+            exit_time DATETIME,
+            -- Package verification fields
+            package_name TEXT,
+            package_version TEXT,
+            package_manager TEXT,
+            is_from_package BOOLEAN DEFAULT 0,
+            package_verified BOOLEAN DEFAULT 0,
+            -- Vector embedding columns
+            proc_embedding F32_BLOB(64),  -- Process behavior embedding
+            context_embedding F32_BLOB(32) -- Contextual embedding
 		);`,
 		`CREATE TABLE IF NOT EXISTS network_connections (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,6 +210,8 @@ func initSchema(db *sql.DB) error {
             is_from_package BOOLEAN DEFAULT 0,
             package_name TEXT,
             package_version TEXT,
+            package_verified BOOLEAN DEFAULT 0,
+            package_manager TEXT,
             process_uid TEXT,
             pid INTEGER,
             ppid INTEGER,
@@ -293,19 +301,20 @@ func (f *SQLiteFormatter) FormatProcess(event *types.ProcessEvent, info *types.P
 		exitTime = BpfTimestampToTime(event.Timestamp)
 	}
 
-	// Insert process with both vector embeddings in a single statement
 	_, err = f.db.Exec(`
         INSERT INTO processes (
             session_uid, process_uid, event_type, fingerprint, parent_uid, timestamp, 
             pid, ppid, comm, cmdline, exe_path, working_dir, username, 
             parent_comm, container_id, uid, gid, binary_hash,
             environment, exit_code, exit_time,
+            package_name, package_version, package_manager, is_from_package, package_verified,
             proc_embedding, context_embedding
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector(?), vector(?))`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector(?), vector(?))`,
 		f.sessionUID, info.ProcessUID, eventType, fingerprint, parentUID, BpfTimestampToTime(event.Timestamp),
 		info.PID, info.PPID, info.Comm, info.CmdLine, info.ExePath, info.WorkingDir, info.Username,
 		info.ParentComm, info.ContainerID, info.UID, info.GID, info.BinaryHash,
 		string(envJSON), exitCode, exitTime,
+		info.PackageName, info.PackageVersion, info.PackageManager, info.IsFromPackage, info.PackageVerified,
 		procEmbeddingStr, contextEmbeddingStr)
 
 	return err
@@ -528,14 +537,14 @@ func (f *SQLiteFormatter) FormatBinary(binary *types.BinaryInfo) error {
             session_uid, timestamp, path, md5_hash, sha256_hash, file_size,
             is_elf, elf_type, architecture, interpreter, imported_libraries,
             import_count, export_count, is_statically_linked, has_debug_info,
-            is_from_package, package_name, package_version,
+            is_from_package, package_name, package_version, package_verified, package_manager,
             process_uid, pid, ppid, comm, parent_comm
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
 		f.sessionUID, time.Now(), binary.Path, binary.MD5Hash, binary.SHA256Hash, binary.FileSize,
 		binary.IsELF, binary.ELFType, binary.Architecture, binary.Interpreter, string(librariesJSON),
 		binary.ImportCount, binary.ExportCount, binary.IsStaticallyLinked, binary.HasDebugInfo,
-		binary.IsFromPackage, binary.PackageName, binary.PackageVersion,
+		binary.IsFromPackage, binary.PackageName, binary.PackageVersion, binary.PackageVerified, binary.PackageManager,
 		binary.ProcessUID, binary.PID, binary.PPID, binary.Comm, binary.ParentComm)
 
 	return err

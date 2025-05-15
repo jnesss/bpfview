@@ -951,16 +951,32 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 	// Calculate hash if enabled and not already set
 	if globalEngine != nil && globalEngine.config.HashBinaries &&
 		info.BinaryHash == "" && info.ExePath != "" && info.ExePath != "[kernel]" {
-
 		if hash, err := CalculateMD5(info.ExePath); err == nil {
 			info.BinaryHash = hash
 			operationResults.WithLabelValues("process", "hash_calc", "success").Inc()
 
 			// Submit to binary analyzer with pre-calculated hash
 			if globalBinaryAnalyzer != nil {
-				go func(exePath, md5Hash string) {
-					globalBinaryAnalyzer.SubmitBinaryWithHash(exePath, md5Hash)
-				}(info.ExePath, hash)
+				// First check if we already have metadata for this binary
+				if metadata, found := globalBinaryAnalyzer.GetMetadataByPath(info.ExePath); found {
+					// Update process info with package information
+					info.PackageName = metadata.PackageName
+					info.PackageVersion = metadata.PackageVersion
+					info.PackageManager = metadata.PackageManager
+					info.IsFromPackage = metadata.IsFromPackage
+					info.PackageVerified = metadata.PackageVerified
+
+					// Log warning for modified system binaries
+					if info.IsFromPackage && !info.PackageVerified {
+						globalLogger.Warning("process", "Process using modified system binary: %s (Package: %s %s)",
+							info.ExePath, info.PackageName, info.PackageVersion)
+					}
+				} else {
+					// Binary not analyzed yet, submit it asynchronously
+					go func(exePath, md5Hash string) {
+						globalBinaryAnalyzer.SubmitBinaryWithHash(exePath, md5Hash)
+					}(info.ExePath, hash)
+				}
 			}
 		} else {
 			operationResults.WithLabelValues("process", "hash_calc", "failure").Inc()

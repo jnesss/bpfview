@@ -76,6 +76,7 @@ func main() {
 		showTimestamp    bool
 		filterConfig     FilterConfig
 		HashBinaries     bool
+		PackageVerify    bool
 		BinaryDBPath     string
 		format           string
 		addHostname      bool
@@ -261,8 +262,9 @@ func main() {
 			globalLogger = logger
 			defer logger.Close()
 
-			// copy HashBinaries setting from local var
+			// copy config settings from local vars
 			config.filterConfig.HashBinaries = config.HashBinaries
+			config.filterConfig.PackageVerify = config.PackageVerify
 
 			// Create filter engine
 			engine := NewFilterEngine(config.filterConfig)
@@ -320,35 +322,49 @@ func main() {
 						ExportCount:        metadata.ExportedSymbolCount,
 						IsStaticallyLinked: metadata.IsStaticallyLinked,
 						HasDebugInfo:       metadata.HasDebugInfo,
-						// will add these next:
-						// IsFromPackage:      metadata.IsFromPackage,
-						// PackageName:        metadata.PackageName,
-						// PackageVersion:     metadata.PackageVersion,
+						IsFromPackage:      metadata.IsFromPackage,
+						PackageName:        metadata.PackageName,
+						PackageVersion:     metadata.PackageVersion,
+						PackageVerified:    metadata.PackageVerified,
+						PackageManager:     metadata.PackageManager,
 					}
 
 					// Report to formatter
 					formatter.FormatBinary(binaryInfo)
-
 					binarySeenTotal.Inc()
+
 					if metadata.IsELF {
 						binaryTypeCount.WithLabelValues(metadata.ELFType).Inc()
 						binaryArchCount.WithLabelValues(metadata.Architecture).Inc()
 					}
-					/* add this next:
+
 					if metadata.IsFromPackage {
 						binaryPackageCount.WithLabelValues(metadata.PackageName).Inc()
+						if metadata.PackageVerified {
+							verifiedBinariesTotal.Inc()
+						} else {
+							modifiedBinariesTotal.Inc()
+						}
 					} else {
 						binaryPackageCount.WithLabelValues("unknown").Inc()
 					}
-					*/
 
 					// Log to console
-					globalLogger.Info("binary", "New binary detected: %s (%s %s)",
-						metadata.Path, metadata.ELFType, metadata.Architecture)
+					if metadata.IsFromPackage && !metadata.PackageVerified {
+						globalLogger.Warning("binary", "Modified system binary detected: %s (Package: %s %s)",
+							metadata.Path, metadata.PackageName, metadata.PackageVersion)
+					} else {
+						globalLogger.Info("binary", "New binary detected: %s (%s %s)",
+							metadata.Path, metadata.ELFType, metadata.Architecture)
+					}
 				})
 
+				// Log enabled features
 				log.Printf("Binary analyzer initialized with database at %s",
-					filepath.Join(logDir, "binarymetadata.db"))
+					filepath.Join(logDir, config.BinaryDBPath))
+				if config.PackageVerify {
+					log.Printf("Package verification enabled - detecting modified system binaries")
+				}
 			}
 
 			if config.sigmaRulesDir != "" {
@@ -478,6 +494,7 @@ func main() {
 
 	// Optional features
 	rootCmd.PersistentFlags().BoolVar(&config.HashBinaries, "hash-binaries", false, "Calculate MD5 hash of process executables")
+	rootCmd.PersistentFlags().BoolVar(&config.PackageVerify, "package-verify", false, "Verify binaries against system packages")
 	rootCmd.Flags().StringVar(&config.BinaryDBPath, "binary-db", "binarymetadata.db",
 		"Path to binary metadata database when using --hash-binaries")
 
@@ -548,11 +565,13 @@ DNS Filters:
 
 TLS Filters:
   --tls-version strings Filter by TLS version (1.0, 1.1, 1.2, 1.3)
-  --sni strings         Filter by SNI hostname (supports wildcards)
+  --sni strings         Filter by SNI hostname (supports wildcards)    
     
 Optional Features:
   --hash-binaries      Calculate and log MD5 hashes of executables
                        Useful for threat hunting and malware detection
+  --package-verify     Verify binaries against system packages
+                       Detects modified system binaries and reports package information
   --binary-db file     Path to binary metadata database when using --hash-binaries
   --sigma <dir>        Directory containing Sigma rules for process and network detection
                        If not specified, Sigma detection is disabled

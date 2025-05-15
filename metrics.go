@@ -69,12 +69,28 @@ var (
 		},
 		[]string{"architecture"})
 
-	binaryPackageCount = promauto.NewCounterVec(
+	// Binary package metrics
+	binaryPackageCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "bpfview_binary_package_count",
-			Help: "Number of binaries by package source",
+			Name: "bpfview_binary_package_total",
+			Help: "Number of binaries by package",
 		},
-		[]string{"package"})
+		[]string{"package"}, // package name or "unknown"
+	)
+
+	verifiedBinariesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "bpfview_verified_binaries_total",
+			Help: "Number of verified package binaries",
+		},
+	)
+
+	modifiedBinariesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "bpfview_modified_binaries_total",
+			Help: "Number of modified package binaries",
+		},
+	)
 )
 
 // Proc reads counter

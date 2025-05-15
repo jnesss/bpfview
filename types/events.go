@@ -159,6 +159,13 @@ type ProcessInfo struct {
 	EventType         string // "fork", "exec", or "exit" for identification and output formatting
 	Fingerprint       string // Process's own fingerprint
 	ParentFingerprint string // Immediate parent's fingerprint
+
+	// Package information
+	PackageName     string
+	PackageVersion  string
+	PackageManager  string
+	IsFromPackage   bool
+	PackageVerified bool
 }
 
 // DNS event structures
@@ -271,9 +278,11 @@ type BinaryInfo struct {
 	HasDebugInfo       bool
 
 	// Package information
-	IsFromPackage  bool
-	PackageName    string
-	PackageVersion string
+	IsFromPackage   bool
+	PackageName     string
+	PackageVersion  string
+	PackageVerified bool
+	PackageManager  string
 
 	// Process context
 	ProcessUID string

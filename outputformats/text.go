@@ -166,7 +166,7 @@ func (f *TextFormatter) Close() error {
 }
 
 func (f *TextFormatter) writeProcessHeader() {
-	fmt.Fprintln(f.processLog, "timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|binary_hash|cmdline|username|container_id|cwd|start_time|fingerprint|exit_time|exit_code|duration")
+	fmt.Fprintln(f.processLog, "timestamp|session_uid|process_uid|event_type|pid|ppid|uid_user|gid|comm|parent_comm|exe_path|binary_hash|cmdline|username|container_id|cwd|fingerprint|package_name|package_version|package_verified|start_time|exit_time|exit_code|duration")
 }
 
 func (f *TextFormatter) writeNetworkHeader() {
@@ -186,7 +186,7 @@ func (f *TextFormatter) writeEnvHeader() {
 }
 
 func (f *TextFormatter) writeBinaryHeader() {
-	fmt.Fprintln(f.binaryLog, "timestamp|session_uid|process_uid|pid|comm|path|md5_hash|sha256_hash|file_size|is_elf|elf_type|architecture|interpreter|import_count|export_count|is_static|is_from_package|package_name")
+	fmt.Fprintln(f.binaryLog, "timestamp|session_uid|process_uid|pid|comm|path|md5_hash|sha256_hash|file_size|is_elf|elf_type|architecture|interpreter|import_count|export_count|is_static|is_from_package|package_name|package_version|package_verified|package_manager")
 }
 
 func (f *TextFormatter) writeSigmaHeader() {
@@ -300,28 +300,31 @@ func (f *TextFormatter) FormatProcess(event *types.ProcessEvent, info *types.Pro
 		}
 	}
 
-	_, err := fmt.Fprintf(f.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
-		event_timeStr, // Event timestamp
-		f.sessionUID,  // Session identifier
-		eventUID,      // Enhanced UID
-		eventType,     // EXEC or FORK or EXIT
+	_, err := fmt.Fprintf(f.processLog, "%s|%s|%s|%s|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+		event_timeStr,
+		f.sessionUID,
+		eventUID,
+		eventType,
 		info.PID,
 		info.PPID,
 		info.UID,
 		info.GID,
-		comm,         // Process name
-		parentComm,   // Parent process name
-		exePath,      // Full executable path
-		binaryHash,   // Binary MD5 hash
-		cmdline,      // Command line with arguments
-		username,     // Username
-		containerID,  // Container ID if available
-		cwd,          // Current Working Directory
-		startTimeStr, // Start time
-		fingerprint,  // Process Fingerprint_Parent Fingerprint
-		exitTimeStr,  // Exit time
-		exitcode,     // Exit code
-		duration,     // Process duration
+		comm,
+		parentComm,
+		exePath,
+		binaryHash,
+		cmdline,
+		username,
+		containerID,
+		cwd,
+		fingerprint,
+		cleanField(info.PackageName, "-"),
+		cleanField(info.PackageVersion, "-"),
+		formatBoolField(info.PackageVerified),
+		startTimeStr,
+		exitTimeStr,
+		exitcode,
+		duration,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to write process log: %v", err)
@@ -773,13 +776,9 @@ func (f *TextFormatter) FormatBinary(binary *types.BinaryInfo) error {
 	if binary.IsStaticallyLinked {
 		isStatic = "1"
 	}
-	isFromPackage := "0"
-	if binary.IsFromPackage {
-		isFromPackage = "1"
-	}
 
 	// Format basic fields
-	_, err := fmt.Fprintf(f.binaryLog, "%s|%s|%s|%d|%s|%s|%s|%s|%d|%s|%s|%s|%s|%d|%d|%s|%s|%s\n",
+	_, err := fmt.Fprintf(f.binaryLog, "%s|%s|%s|%d|%s|%s|%s|%s|%d|%s|%s|%s|%s|%d|%d|%s|%s|%s|%s|%s|%s\n",
 		timestamp,
 		f.sessionUID,
 		binary.ProcessUID,
@@ -796,8 +795,11 @@ func (f *TextFormatter) FormatBinary(binary *types.BinaryInfo) error {
 		binary.ImportCount,
 		binary.ExportCount,
 		isStatic,
-		isFromPackage,
-		binary.PackageName)
+		formatBoolField(binary.IsFromPackage),
+		cleanField(binary.PackageName, "-"),
+		cleanField(binary.PackageVersion, "-"),
+		formatBoolField(binary.PackageVerified),
+		cleanField(binary.PackageManager, "-"))
 
 	return err
 }
@@ -915,4 +917,11 @@ func formatSupportedGroups(groups []uint16) string {
 		strs[i] = formatSupportedGroup(g)
 	}
 	return strings.Join(strs, ",")
+}
+
+func formatBoolField(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
