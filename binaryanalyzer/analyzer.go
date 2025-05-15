@@ -104,17 +104,6 @@ func initBinarySchema() error {
 		return fmt.Errorf("failed to create binaries table: %v", err)
 	}
 
-	// Execute the index creation separately for better error reporting
-	_, err = globalDB.Exec("CREATE INDEX IF NOT EXISTS idx_binary_md5 ON binaries(md5_hash);")
-	if err != nil {
-		return fmt.Errorf("failed to create md5 index: %v", err)
-	}
-
-	_, err = globalDB.Exec("CREATE INDEX IF NOT EXISTS idx_binary_path ON binaries(path);")
-	if err != nil {
-		return fmt.Errorf("failed to create path index: %v", err)
-	}
-
 	return nil
 }
 
