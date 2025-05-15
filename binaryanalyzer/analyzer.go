@@ -341,7 +341,7 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 				ELFType:             elfInfoValue(elfInfo, "Type").(string),
 				Architecture:        elfInfoValue(elfInfo, "Architecture").(string),
 				Interpreter:         elfInfoValue(elfInfo, "Interpreter").(string),
-				ImportedLibraries:   elfInfo.ImportedLibraries,
+				ImportedLibraries:   getElfLibraries(elfInfo),
 				ImportedSymbolCount: importedSymbolCount,
 				ExportedSymbolCount: exportedSymbolCount,
 				IsStaticallyLinked:  elfInfoBool(elfInfo, "IsStaticallyLinked"),
@@ -633,6 +633,13 @@ func elfInfoBool(info *ELFInfo, field string) bool {
 	default:
 		return false
 	}
+}
+
+func getElfLibraries(info *ELFInfo) []string {
+	if info == nil {
+		return []string{}
+	}
+	return info.ImportedLibraries
 }
 
 // isLinuxExecutable checks if a file might be a Linux executable by looking at its header
