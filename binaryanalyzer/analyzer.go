@@ -7,14 +7,122 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
+
+	_ "github.com/tursodatabase/limbo" // Import the driver
 )
+
+// Global state for the single database connection
+var (
+	globalDB               *sql.DB
+	initialized            bool
+	initMutex              sync.Mutex
+	verificationInProgress sync.Map
+	verificationTimeout    = 10 * time.Second
+)
+
+// initializeDB ensures we have a single global database connection
+func initializeDB(dbPath string) error {
+	initMutex.Lock()
+	defer initMutex.Unlock()
+
+	if initialized && globalDB != nil {
+		return nil
+	}
+
+	// Create log directory if needed
+	dirPath := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %v", dirPath, err)
+	}
+
+	var err error
+	globalDB, err = sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %v", err)
+	}
+
+	// CRITICAL: Force a single connection to avoid the multi-connection issue
+	globalDB.SetMaxOpenConns(1)
+	globalDB.SetMaxIdleConns(1)
+
+	// Verify connection works
+	if err := globalDB.Ping(); err != nil {
+		globalDB.Close()
+		return fmt.Errorf("database connection failed: %v", err)
+	}
+
+	// Initialize schema
+	if err := initBinarySchema(); err != nil {
+		globalDB.Close()
+		globalDB = nil
+		return fmt.Errorf("failed to initialize schema: %v", err)
+	}
+
+	initialized = true
+	return nil
+}
+
+// initBinarySchema creates the database tables for binary metadata
+// (moved from schema.go to eliminate that file)
+func initBinarySchema() error {
+	sql := `
+    CREATE TABLE IF NOT EXISTS binaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL,
+        md5_hash TEXT NOT NULL UNIQUE,
+        sha256_hash TEXT,
+        file_size INTEGER NOT NULL,
+        mod_time DATETIME NOT NULL,
+        first_seen DATETIME NOT NULL,
+        
+        -- ELF information
+        is_elf BOOLEAN DEFAULT 0,
+        elf_type TEXT,
+        architecture TEXT,
+        interpreter TEXT,
+        imported_libraries TEXT, -- JSON array
+        imported_symbols_count INTEGER DEFAULT 0,
+        exported_symbols_count INTEGER DEFAULT 0,
+        is_statically_linked BOOLEAN DEFAULT 0,
+        sections TEXT, -- JSON array
+        has_debug_info BOOLEAN DEFAULT 0,
+        
+        -- Package information
+        is_from_package BOOLEAN DEFAULT 0,
+        package_name TEXT,
+        package_version TEXT,
+        package_verified BOOLEAN DEFAULT 0,
+        package_manager TEXT,
+        
+        analyzed BOOLEAN DEFAULT 0
+        );`
+
+	_, err := globalDB.Exec(sql)
+	if err != nil {
+		return fmt.Errorf("failed to create binaries table: %v", err)
+	}
+
+	// Execute the index creation separately for better error reporting
+	_, err = globalDB.Exec("CREATE INDEX IF NOT EXISTS idx_binary_md5 ON binaries(md5_hash);")
+	if err != nil {
+		return fmt.Errorf("failed to create md5 index: %v", err)
+	}
+
+	_, err = globalDB.Exec("CREATE INDEX IF NOT EXISTS idx_binary_path ON binaries(path);")
+	if err != nil {
+		return fmt.Errorf("failed to create path index: %v", err)
+	}
+
+	return nil
+}
 
 // analyzerImpl implements the BinaryAnalyzer interface
 type analyzerImpl struct {
-	db                *sql.DB
 	logger            Logger
 	newBinaryCallback func(BinaryMetadata)
+	dbPath            string
 }
 
 // Ensure implementation satisfies interface
@@ -22,29 +130,44 @@ var _ BinaryAnalyzer = (*analyzerImpl)(nil)
 
 // New creates a new BinaryAnalyzer
 func New(config Config) (BinaryAnalyzer, error) {
-	// Create log directory if needed
-	if err := os.MkdirAll(filepath.Dir(config.DBPath), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create directory: %v", err)
-	}
-
-	// Open database
-	db, err := sql.Open("sqlite3", config.DBPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %v", err)
-	}
-
-	// Initialize schema
-	if err := initBinarySchema(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize schema: %v", err)
+	// Initialize the database connection if it hasn't been initialized yet
+	if err := initializeDB(config.DBPath); err != nil {
+		return nil, err
 	}
 
 	analyzer := &analyzerImpl{
-		db:     db,
 		logger: config.Logger,
+		dbPath: config.DBPath,
 	}
 
 	return analyzer, nil
+}
+
+// isVerificationInProgress checks if verification is already happening for a binary
+func (a *analyzerImpl) isVerificationInProgress(path string) bool {
+	if val, exists := verificationInProgress.Load(path); exists {
+		expirationTime, ok := val.(time.Time)
+		if ok && time.Now().Before(expirationTime) {
+			a.logger.Debug("binary", "Verification already in progress for %s, skipping", path)
+			return true
+		}
+		// Expired entry, clean it up
+		verificationInProgress.Delete(path)
+	}
+	return false
+}
+
+// markVerificationInProgress sets tracking for a binary being verified
+func (a *analyzerImpl) markVerificationInProgress(path string) {
+	// Set expiration time for this verification
+	expirationTime := time.Now().Add(verificationTimeout)
+	verificationInProgress.Store(path, expirationTime)
+
+	// Schedule cleanup after timeout to prevent stale entries
+	go func() {
+		time.Sleep(verificationTimeout)
+		verificationInProgress.Delete(path)
+	}()
 }
 
 // SubmitBinary calculates the MD5 hash and then calls SubmitBinaryWithHash
@@ -68,6 +191,15 @@ func (a *analyzerImpl) SubmitBinary(path string) {
 
 // SubmitBinaryWithHash processes a binary file with a pre-calculated MD5 hash
 func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
+	// Skip if already being verified to prevent recursion
+	if a.isVerificationInProgress(path) {
+		return
+	}
+
+	// Mark as in-progress with auto-expiration
+	a.markVerificationInProgress(path)
+	defer verificationInProgress.Delete(path)
+
 	// Basic validation
 	if path == "" || md5Hash == "" {
 		a.logger.Debug("binary", "Empty path or empty md5hash submitted, skipping")
@@ -96,13 +228,15 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 		return
 	}
 
+	// Analyze ELF metadata if applicable
 	var elfInfo *ELFInfo
 	isELF := false
 	if isLinuxExecutable(path) {
 		if info, err := AnalyzeELF(path); err == nil {
 			isELF = true
 			elfInfo = info
-			a.logger.Info("binary", "ELF analysis successful for %s: %s %s", path, info.Type, info.Architecture)
+			a.logger.Info("binary", "ELF analysis successful for %s: %s %s",
+				path, info.Type, info.Architecture)
 		} else {
 			a.logger.Debug("binary", "Not an ELF binary or ELF analysis failed: %v", err)
 		}
@@ -132,9 +266,8 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 		}
 	}
 
-	// Convert arrays to JSON for storage
+	// Process ELF info for storage
 	var librariesJSON, sectionsJSON string
-	// Get symbol counts for storage
 	var importedSymbolCount, exportedSymbolCount int
 
 	if elfInfo != nil {
@@ -147,58 +280,21 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 		// Extract symbol counts
 		importedSymbolCount = len(elfInfo.ImportedSymbols)
 		exportedSymbolCount = len(elfInfo.ExportedSymbols)
-
-		// In the future, we may want to store the most important symbols
-		// rather than just counts, to use in fingerprinting and vector embeddings.
-		// We will then use these for binary similarity search.
 	} else {
 		// Default empty arrays for non-ELF binaries
 		librariesJSON = "[]"
 		sectionsJSON = "[]"
-		importedSymbolCount = 0
-		exportedSymbolCount = 0
 	}
 
-	// We don't have UPSERT in limbo yet so need to use check-then-insert pattern
-	// Check if the record already exists
+	// Check if record exists
 	var exists bool
-	err = a.db.QueryRow("SELECT 1 FROM binaries WHERE md5_hash = ? LIMIT 1", md5Hash).Scan(&exists)
+	err = globalDB.QueryRow("SELECT 1 FROM binaries WHERE md5_hash = ? LIMIT 1", md5Hash).Scan(&exists)
 	now := time.Now()
 
-	// Later, we'll add code here to:
-	// 1. Generate a vector embedding from the binary features
-	// 2. Perform similarity search to find related binaries
-	// 3. Store the embedding and similarity info in the database
-
-	// If the record doesn't exist or there was an error (no rows), insert it
+	// Insert or update based on existence
 	if err == sql.ErrNoRows || !exists {
-
-		// Package verification
-		var isFromPackage bool
-		var packageName, packageVersion, packageManager string
-		var packageVerified bool
-
-		verifier := CreatePackageVerifier()
-		if verifier != nil && verifier.IsAvailable() {
-			packageInfo, err := verifier.Verify(path)
-			if err == nil {
-				isFromPackage = packageInfo.IsFromPackage
-				packageName = packageInfo.PackageName
-				packageVersion = packageInfo.PackageVersion
-				packageVerified = packageInfo.Verified
-				packageManager = packageInfo.Manager
-
-				if isFromPackage {
-					a.logger.Info("binary", "Package verification: %s belongs to %s (%s), verified: %v",
-						path, packageName, packageVersion, packageVerified)
-				} else {
-					a.logger.Info("binary", "Binary %s is not part of any system package", path)
-				}
-			}
-		}
-
-		// Perform INSERT
-		_, err = a.db.Exec(`
+		// Insert new record
+		_, err = globalDB.Exec(`
             INSERT INTO binaries (
                 path, md5_hash, sha256_hash, file_size, mod_time, first_seen,
                 is_elf, elf_type, architecture, interpreter, 
@@ -231,8 +327,9 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 		}
 		a.logger.Info("binary", "Inserted new binary %s: MD5=%s", path, md5Hash)
 
+		// Notify about new binary via callback
 		if a.newBinaryCallback != nil {
-			// Create metadata object from our findings
+			// Create metadata object
 			metadata := BinaryMetadata{
 				Path:                path,
 				MD5Hash:             md5Hash,
@@ -256,13 +353,12 @@ func (a *analyzerImpl) SubmitBinaryWithHash(path string, md5Hash string) {
 				PackageManager:      packageManager,
 			}
 
-			// Call the callback with metadata
+			// Call the callback
 			a.newBinaryCallback(metadata)
 		}
-
 	} else {
-		// Perform UPDATE
-		_, err = a.db.Exec(`
+		// Update existing record
+		_, err = globalDB.Exec(`
             UPDATE binaries SET
                 is_elf = CASE WHEN ? THEN ? ELSE is_elf END,
                 elf_type = CASE WHEN ? THEN ? ELSE elf_type END,
@@ -315,7 +411,8 @@ func (a *analyzerImpl) GetMetadataByHash(hash string) (BinaryMetadata, bool) {
 	var elfType, architecture, interpreter sql.NullString
 	var importSymCount, exportSymCount sql.NullInt64
 
-	err := a.db.QueryRow(`
+	// Using global DB connection
+	err := globalDB.QueryRow(`
         SELECT md5_hash, sha256_hash, file_size, mod_time, first_seen,
                is_elf, elf_type, architecture, interpreter, 
                imported_libraries, imported_symbols_count, exported_symbols_count,
@@ -356,11 +453,11 @@ func (a *analyzerImpl) GetMetadataByHash(hash string) (BinaryMetadata, bool) {
 			metadata.Interpreter = interpreter.String
 		}
 		if importSymCount.Valid {
-			// We don't store all symbols in DB, just the count
+			metadata.ImportedSymbolCount = int(importSymCount.Int64)
 			metadata.ImportedSymbols = make([]string, 0)
 		}
 		if exportSymCount.Valid {
-			// We don't store all symbols in DB, just the count
+			metadata.ExportedSymbolCount = int(exportSymCount.Int64)
 			metadata.ExportedSymbols = make([]string, 0)
 		}
 		if isStaticallyLinked.Valid {
@@ -370,16 +467,9 @@ func (a *analyzerImpl) GetMetadataByHash(hash string) (BinaryMetadata, bool) {
 			metadata.HasDebugInfo = hasDebugInfo.Bool
 		}
 
-		// Parse imported libraries from JSON
-		if importSymCount.Valid {
-			metadata.ImportedSymbolCount = int(importSymCount.Int64)
-			// later we'll store actual symbols for fingerprinting
-			metadata.ImportedSymbols = make([]string, 0)
-		}
-		if exportSymCount.Valid {
-			metadata.ExportedSymbolCount = int(exportSymCount.Int64)
-			// later we'll store actual symbols for fingerprinting
-			metadata.ExportedSymbols = make([]string, 0)
+		// Parse imported libraries from JSON if needed
+		if importedLibrariesJSON != "" {
+			json.Unmarshal([]byte(importedLibrariesJSON), &metadata.ImportedLibraries)
 		}
 	}
 
@@ -394,7 +484,8 @@ func (a *analyzerImpl) GetMetadataByPath(path string) (BinaryMetadata, bool) {
 	var elfType, architecture, interpreter, packageName, packageVersion, packageManager sql.NullString
 	var importSymCount, exportSymCount sql.NullInt64
 
-	err := a.db.QueryRow(`
+	// Using global DB connection
+	err := globalDB.QueryRow(`
         SELECT md5_hash, sha256_hash, file_size, mod_time, first_seen,
                is_elf, elf_type, architecture, interpreter, 
                imported_libraries, imported_symbols_count, exported_symbols_count,
@@ -425,19 +516,15 @@ func (a *analyzerImpl) GetMetadataByPath(path string) (BinaryMetadata, bool) {
 		&packageManager,
 	)
 	if err != nil {
-		a.logger.Error("binary", "Error retrieving metadata for %s: %v", path, err)
 		return BinaryMetadata{}, false
 	}
 
 	// Set path
 	metadata.Path = path
 
-	// Set ELF fields if it's an ELF binary
+	// Handle ELF fields
 	if isELF.Valid && isELF.Bool {
 		metadata.IsELF = true
-
-		a.logger.Debug("binary", "Retrieved ELF binary info for %s", path)
-
 		if elfType.Valid {
 			metadata.ELFType = elfType.String
 		}
@@ -455,36 +542,18 @@ func (a *analyzerImpl) GetMetadataByPath(path string) (BinaryMetadata, bool) {
 			metadata.ImportedLibraries = []string{}
 		}
 
-		// Set imported/exported symbol counts
 		if importSymCount.Valid {
 			metadata.ImportedSymbolCount = int(importSymCount.Int64)
-			// Later, we'll store actual symbols for fingerprinting
-			metadata.ImportedSymbols = make([]string, 0)
 		}
 		if exportSymCount.Valid {
 			metadata.ExportedSymbolCount = int(exportSymCount.Int64)
-			// Later, we'll store actual symbols for fingerprinting
-			metadata.ExportedSymbols = make([]string, 0)
 		}
-
-		// Set other boolean flags
 		if isStaticallyLinked.Valid {
 			metadata.IsStaticallyLinked = isStaticallyLinked.Bool
 		}
 		if hasDebugInfo.Valid {
 			metadata.HasDebugInfo = hasDebugInfo.Bool
 		}
-
-		// Parse sections from JSON
-		if sectionsJSON.Valid && sectionsJSON.String != "" {
-			json.Unmarshal([]byte(sectionsJSON.String), &metadata.Sections)
-		} else {
-			metadata.Sections = []string{}
-		}
-
-	} else {
-		a.logger.Debug("binary", "Retrieved non-ELF binary info for %s", path)
-		metadata.IsELF = false
 	}
 
 	// Set package information
@@ -512,15 +581,31 @@ func (a *analyzerImpl) SetNewBinaryCallback(callback func(BinaryMetadata)) {
 	a.newBinaryCallback = callback
 }
 
-// Close closes the database connection
+// Close properly closes the global database connection
+// Since there's only one analyzer instance in the application, this is appropriate
 func (a *analyzerImpl) Close() error {
-	return a.db.Close()
+	initMutex.Lock()
+	defer initMutex.Unlock()
+
+	if initialized && globalDB != nil {
+		err := globalDB.Close()
+		globalDB = nil
+		initialized = false
+		return err
+	}
+
+	return nil
 }
 
-// Helper functions to safely access ELF info
+// Helper functions
 func elfInfoValue(info *ELFInfo, field string) interface{} {
 	if info == nil {
-		return nil
+		switch field {
+		case "Type", "Architecture", "Interpreter":
+			return ""
+		default:
+			return nil
+		}
 	}
 
 	switch field {
@@ -532,21 +617,6 @@ func elfInfoValue(info *ELFInfo, field string) interface{} {
 		return info.Interpreter
 	default:
 		return nil
-	}
-}
-
-func elfInfoCount(info *ELFInfo, field string) int {
-	if info == nil {
-		return 0
-	}
-
-	switch field {
-	case "ImportedSymbols":
-		return len(info.ImportedSymbols)
-	case "ExportedSymbols":
-		return len(info.ExportedSymbols)
-	default:
-		return 0
 	}
 }
 
@@ -565,26 +635,11 @@ func elfInfoBool(info *ELFInfo, field string) bool {
 	}
 }
 
-// Function to safely convert to JSON
-func toJSON(data []string) string {
-	if data == nil || len(data) == 0 {
-		return "[]"
-	}
-
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return "[]"
-	}
-
-	return string(jsonData)
-}
-
 // isLinuxExecutable checks if a file might be a Linux executable by looking at its header
 func isLinuxExecutable(path string) bool {
 	// Open the file
 	file, err := os.Open(path)
 	if err != nil {
-		fmt.Printf("DEBUG: Error opening file for ELF check: %v\n", err)
 		return false
 	}
 	defer file.Close()
@@ -592,14 +647,9 @@ func isLinuxExecutable(path string) bool {
 	// Read the first 4 bytes (ELF magic number)
 	magic := make([]byte, 4)
 	if _, err := file.Read(magic); err != nil {
-		fmt.Printf("DEBUG: Error reading magic bytes: %v\n", err)
 		return false
 	}
 
-	// Check for ELF magic number and print it for debugging
-	elfMagic := bytes.Equal(magic, []byte{0x7F, 'E', 'L', 'F'})
-	fmt.Printf("DEBUG: File %s, Magic bytes: [%x %x %x %x], Is ELF: %v\n",
-		path, magic[0], magic[1], magic[2], magic[3], elfMagic)
-
-	return elfMagic
+	// Check for ELF magic number
+	return bytes.Equal(magic, []byte{0x7F, 'E', 'L', 'F'})
 }
