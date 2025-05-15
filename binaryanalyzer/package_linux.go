@@ -49,9 +49,9 @@ func (r *rpmVerifier) Verify(path string) (PackageInfo, error) {
 		Manager: "rpm",
 	}
 
+	// First query to get package name and version
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
 	cmd := exec.CommandContext(ctx, "rpm", "-qf", path, "--queryformat", "%{NAME}|%{VERSION}-%{RELEASE}")
 	output, err := cmd.CombinedOutput()
 
@@ -74,8 +74,12 @@ func (r *rpmVerifier) Verify(path string) (PackageInfo, error) {
 		defer verifyCancel()
 
 		// Use specific verification arguments to check only this file
-		verifyCmd := exec.CommandContext(verifyCtx, "rpm", "-V", "--nodeps", "-f", path)
+		verifyCmd := exec.CommandContext(verifyCtx, "rpm", "-V", "--nodeps", info.PackageName)
 		verifyOutput, verifyErr := verifyCmd.CombinedOutput()
+
+		if verifyErr != nil {
+			fmt.Printf("DEBUG: Verify error: %v\n", verifyErr)
+		}
 
 		if verifyCtx.Err() == context.DeadlineExceeded {
 			info.Verified = false
@@ -83,16 +87,35 @@ func (r *rpmVerifier) Verify(path string) (PackageInfo, error) {
 		}
 
 		// rpm -V returns nothing when verification succeeds
-		info.Verified = len(verifyOutput) == 0 && verifyErr == nil
+		outputLines := strings.Split(string(verifyOutput), "\n")
+		binaryModified := false
+
+		for _, line := range outputLines {
+			// Get the actual file path from the line (usually at the end of the line)
+			parts := strings.Split(line, " ")
+			if len(parts) < 2 {
+				continue
+			}
+
+			// Get the actual file path - usually the last part after spaces
+			filePath := strings.TrimSpace(parts[len(parts)-1])
+
+			// Only consider this a match if it's the exact path we're looking for
+			if filePath == path && !strings.Contains(line, " c ") {
+				binaryModified = true
+				break
+			}
+		}
+
+		info.Verified = !binaryModified
 
 		// For debugging, log why verification failed
 		if !info.Verified && len(verifyOutput) > 0 {
-			// outputStr := strings.TrimSpace(string(verifyOutput))
 			// Example parsing: "S.5....T c /usr/bin/example"
 			// S = size differs, M = mode differs, 5 = MD5 sum differs, etc.
-			// logger.Debug("binary", "Verification failed for %s: %s", path, outputStr)
+			outputStr := strings.TrimSpace(string(verifyOutput))
+			fmt.Printf("DEBUG: Verification failed for %s: %s\n", path, outputStr)
 		}
-
 	}
 
 	return info, nil
