@@ -27,21 +27,41 @@ Verified platforms:
 - Ubuntu 24.04 LTS (kernel 6.8+)
 
 ### Building from Source
+
+#### 1. Install Dependencies
+
 ```bash
-# Install dependencies
+# Install development dependencies
 sudo apt-get update
 sudo apt-get install -y clang llvm libbpf-dev linux-headers-generic gcc-multilib make golang-go
+```
 
-# Clone repository
+#### 2. Build Limbo Database (Required Dependency)
+
+```bash
+# Clone Limbo repository
+git clone https://github.com/tursodatabase/limbo
+cd limbo/bindings/go
+./build_lib.sh
+```
+
+#### 3. Build BPFView
+
+```bash
+# Clone BPFView repository
 git clone https://github.com/jnesss/bpfview.git
 cd bpfview
 
 # Generate BTF headers if needed
+# If your kernel doesn't provide BTF info, generate it with:
 # bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 
-# Build
+# Generate eBPF code and build BPFView
 go generate
 go build
+
+# Verify installation
+./bpfview --help
 ```
 
 ## Basic Usage
@@ -109,7 +129,7 @@ sudo bpfview --dport 53 --protocol UDP
 
 ```bash
 # Track specific process and children
-sudo bpfview --comm nginx --tree
+sudo bpfview --comm nginx,php-fpm --tree
 
 # Track user activity
 sudo bpfview --user admin
