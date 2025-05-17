@@ -1,34 +1,120 @@
 # BPFView Advanced Usage Guide
 
-This guide covers advanced configuration options, deployment strategies, troubleshooting, and integration techniques for BPFView.
+This guide covers advanced configuration options and features available in BPFView, focusing on fine-grained filtering, performance tuning, and integration options.
 
 ## Advanced Filtering Techniques
 
 BPFView offers sophisticated filtering capabilities that can be combined for precise event selection.
 
-### Complex Filter Combinations
+### Process Filtering
 
 ```bash
-# Monitor web servers and their child processes
-sudo bpfview --comm "nginx,apache2" --tree
+# Filter by command name
+sudo bpfview --comm nginx,php-fpm
 
-# Track activity in specific containers excluding system processes
-sudo bpfview --container-id "*" --exclude-comm "chronyd,systemd-journal"
+# Filter by process ID
+sudo bpfview --pid 1234,5678
 
-# Monitor specific domains and their subdomains
-sudo bpfview --domain "*.example.com,*.internal.corp"
+# Filter by parent process ID
+sudo bpfview --ppid 1000
 
-# Filter by executable and username simultaneously
-sudo bpfview --exe "/usr/bin/python" --user admin,www-data
+# Filter by binary hash (requires --hash-binaries)
+sudo bpfview --hash-binaries --binary-hash 9c30781b6d88fd2c8acebab96791fcb1
+
+# Filter by username
+sudo bpfview --user www-data,nginx
+
+# Filter by executable path
+sudo bpfview --exe "/usr/bin/python"
+
+# Filter by container ID
+sudo bpfview --container-id "3f4552dfc342"
+sudo bpfview --container-id "*"  # Match any container
 ```
 
-### Process Tree Tracking
+### Process Exclusion
+
+```bash
+# Exclude specific command names
+sudo bpfview --exclude-comm "chronyd,systemd-journal"
+
+# Exclude processes by executable path
+sudo bpfview --exclude-exe-path "/usr/sbin/,/usr/lib/systemd/"
+
+# Exclude specific users
+sudo bpfview --exclude-user "nobody,www-data"
+
+# Exclude specific containers
+sudo bpfview --exclude-container "3f4552dfc342"
+
+# Exclude specific network ports
+sudo bpfview --exclude-port "80,443,53"
+```
+
+### Network Filtering
+
+```bash
+# Filter by protocol
+sudo bpfview --protocol TCP,UDP
+
+# Filter by source IP
+sudo bpfview --src-ip 192.168.1.10,10.0.0.1
+
+# Filter by destination IP
+sudo bpfview --dst-ip 8.8.8.8,1.1.1.1
+
+# Filter by source port
+sudo bpfview --sport 22,8080
+
+# Filter by destination port
+sudo bpfview --dport 80,443
+```
+
+### DNS Filtering
+
+```bash
+# Filter by domain name (supports wildcards)
+sudo bpfview --domain "*.example.com,evil.com"
+
+# Filter by DNS record type
+sudo bpfview --dns-type A,AAAA,CNAME
+```
+
+### TLS Filtering
+
+```bash
+# Filter by TLS version
+sudo bpfview --tls-version 1.2,1.3
+
+# Filter by SNI host (supports wildcards)
+sudo bpfview --sni "*.google.com,bank.com"
+```
+
+### Combining Filters
+
+Filters can be combined to create precise monitoring configurations:
+
+```bash
+# Monitor nginx instances connecting to specific domains
+sudo bpfview --comm nginx --domain "*.internal.com,*.example.org"
+
+# Track only SSH connections from a specific user
+sudo bpfview --user admin --dport 22
+
+# Monitor all container traffic except for specific ports
+sudo bpfview --container-id "*" --exclude-port "80,443"
+
+# Track all child processes of a specific application
+sudo bpfview --comm "app-server" --tree
+```
+
+## Process Tree Tracking
 
 The `--tree` option enables monitoring of all child processes spawned by matching processes:
 
 ```bash
-# Track a specific service and all its children
-sudo bpfview --comm "sshd" --tree
+# Track a web server and all its worker processes
+sudo bpfview --comm "nginx" --tree
 
 # Track all processes launched by a specific user
 sudo bpfview --user admin --tree
@@ -36,395 +122,181 @@ sudo bpfview --user admin --tree
 
 This tracking persists even when child processes change their command name, helping to monitor complete process chains.
 
-### Regex-Like Domain Filtering
+## Binary Analysis Configuration
 
-Domain and SNI filters support wildcard matching:
+BPFView can analyze binary files for additional security insights:
 
 ```bash
-# Match exact domain
-sudo bpfview --domain "example.com"
+# Enable basic binary hashing
+sudo bpfview --hash-binaries
 
-# Match domain and all subdomains
-sudo bpfview --domain "*.example.com"
+# Enable binary hashing with package verification
+sudo bpfview --hash-binaries --package-verify
 
-# Match multiple patterns
-sudo bpfview --domain "api.*.com,*.internal.corp"
+# Specify a custom database path
+sudo bpfview --hash-binaries --binary-db /path/to/custom/binaries.db
 ```
 
-### Fine-Grained Process Exclusion
+## Sigma Integration
 
-For high-volume environments, process exclusion can significantly improve performance:
+Configure real-time detection with Sigma rules:
 
 ```bash
-# Exclude by command name with wildcards
-sudo bpfview --exclude-comm "kworker/*,jbd2/*"
+# Enable Sigma detection with default rules directory
+sudo bpfview --sigma ./sigma
 
-# Exclude by executable path pattern
-sudo bpfview --exclude-exe-path "/usr/lib/systemd/*,/usr/bin/python*"
-
-# Exclude by username
-sudo bpfview --exclude-user "nobody,www-data"
-
-# Combine inclusion and exclusion
-sudo bpfview --comm nginx --exclude-container "*" --exe-path "/usr/sbin/nginx"
+# Adjust queue size for high-volume environments
+sudo bpfview --sigma ./sigma --sigma-queue-size 50000
 ```
 
-## Advanced Configuration
+## Process Information Level
 
-### Customizing Process Information Level
-
-The `--process-level` option controls how much process information is collected:
+Control how much process information is collected:
 
 ```bash
-# Minimal - Only kernel-provided data with almost no /proc access
+# Minimal process info (lowest overhead)
 sudo bpfview --process-level minimal
 
-# Basic - Core process info (executable path, command line)
+# Basic process info (balanced)
 sudo bpfview --process-level basic
 
-# Full - Complete information including environment variables
+# Full process info (most detailed)
 sudo bpfview --process-level full
 ```
 
-Use case comparison:
-- **Minimal**: High-volume production servers (lowest overhead)
-- **Basic**: General monitoring with good performance
-- **Full**: Detailed forensic analysis and security monitoring
+Process level details:
+- **minimal**: Only kernel-provided data with almost no /proc access
+- **basic**: Core process attributes (executable path, command line)
+- **full**: Complete information including environment variables and container details
 
-### Advanced Sigma Configuration
+## Performance Optimization
 
-Customize Sigma detection behavior:
-
-```bash
-# Larger queue for high-volume environments
-sudo bpfview --sigma ./rules --sigma-queue-size 50000
-
-# Custom rules location with memory dumping enabled
-sudo bpfview --sigma /etc/bpfview/rules --dump-dir /var/forensics/dumps
-```
-
-### Custom Database Configuration
-
-For SQLite output, configure database location and options:
+Fine-tune BPFView's resource usage:
 
 ```bash
-# Custom database path
-sudo bpfview --format sqlite --dbfile /path/to/custom/bpfview.db
+# Adjust process cache size
+sudo bpfview --process-cache-size 5000
 
-# Specify journal mode
-sudo bpfview --format sqlite --dbfile :memory: --db-journal WAL
+# Set cache entry timeout
+sudo bpfview --cache-timeout 30m
 ```
 
-### Binary Analyzer Configuration
+## Output Configuration
 
-Configure the binary analyzer component:
+### Log Levels
+
+Control how much information is displayed in the console:
 
 ```bash
-# Custom binary metadata database path
-sudo bpfview --hash-binaries --binary-db /path/to/database.db
+# Error level (minimal output)
+sudo bpfview --log-level error
 
-# Adjust worker pool size for binary analysis
-sudo bpfview --hash-binaries --binary-workers 4
-```
+# Warning level
+sudo bpfview --log-level warning
 
-## Production Deployment
+# Info level (default)
+sudo bpfview --log-level info
 
-### System Service Setup
-
-Create a systemd service for persistent monitoring:
-
-```ini
-# /etc/systemd/system/bpfview.service
-[Unit]
-Description=BPFView Process and Network Monitoring
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/bpfview --hash-binaries --package-verify --sigma /etc/bpfview/sigma --format json-ecs
-Restart=on-failure
-RestartSec=5
-KillMode=process
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start the service:
-
-```bash
-sudo systemctl enable bpfview
-sudo systemctl start bpfview
-```
-
-### Log Rotation Integration
-
-Configure logrotate for BPFView logs:
-
-```
-# /etc/logrotate.d/bpfview
-/var/log/bpfview/*.log {
-    daily
-    missingok
-    rotate 14
-    compress
-    delaycompress
-    notifempty
-    create 0640 root adm
-    sharedscripts
-    postrotate
-        systemctl restart bpfview
-    endscript
-}
-```
-
-### Secure Deployment Recommendations
-
-1. **Run with Limited Privileges**:
-   - Create a dedicated service user
-   - Use capabilities instead of root when possible
-   - Configure secomp/apparmor profiles
-
-2. **Secure Output Files**:
-   - Set appropriate permissions on log directories
-   - Use encrypted filesystems for sensitive logs
-   - Implement fine-grained access controls
-
-3. **Network Security**:
-   - Restrict Prometheus metric endpoint
-   - Use TLS for log shipping
-   - Implement network segmentation
-
-4. **Monitoring BPFView Itself**:
-   - Set up alerts for BPFView service status
-   - Monitor log file sizes and rotation
-   - Track Prometheus metrics for health
-
-### Multi-Host Deployment
-
-For distributed environments:
-
-1. **Centralized Collection**:
-   - Use Filebeat/Logstash to ship logs to central location
-   - Include `--add-hostname` and `--add-ip` for host identification
-   - Configure consistent session UIDs across fleet
-
-2. **Configuration Management**:
-   - Use Ansible/Chef/Puppet for consistent deployment
-   - Centralize Sigma rules distribution
-   - Implement RBAC for configuration changes
-
-3. **Scalability Considerations**:
-   - Use `--process-level minimal` on high-traffic hosts
-   - Implement appropriate exclusion filters based on host role
-   - Configure resource limits based on system capacity
-
-## Integration with Security Tools
-
-### SIEM Integration
-
-For Security Information and Event Management systems:
-
-1. **Elastic Stack**:
-   - Use `--format json-ecs` for direct Elasticsearch compatibility
-   - Configure Kibana dashboards for BPFView events
-   - Set up alerts based on Sigma matches
-
-2. **Splunk**:
-   - Use `--format json` and configure appropriate props/transforms
-   - Create Splunk dashboards for process and network monitoring
-   - Import MITRE ATT&CK framework for alerting
-
-3. **Custom SIEM**:
-   - Use structured output formats (JSON, ECS, or GELF)
-   - Normalize timestamp and fields for correlation
-   - Maintain unique identifiers for cross-event analysis
-
-### Threat Hunting Integration
-
-For active threat hunting:
-
-1. **Hunting Queries**:
-   - Create SQL templates for common hunting scenarios
-   - Use process-network-DNS correlation for attack chain analysis
-   - Implement JA4 fingerprinting for client behavior profiling
-
-2. **Binary Analysis Integration**:
-   - Search for modified system binaries
-   - Profile statically linked binaries outside standard locations
-   - Track binaries with unusual import patterns
-
-3. **Automated Analysis**:
-   - Integration with YARA for binary scanning
-   - Memory dump integration with Volatility
-   - Automated binary submission to sandbox environments
-
-### Prometheus Integration
-
-Configure additional metrics options:
-
-```bash
-# Custom Prometheus endpoint
-sudo bpfview --metrics-addr "127.0.0.1:9100"
-
-# Detailed metrics collection
-sudo bpfview --detailed-metrics
-```
-
-Example Prometheus queries:
-```
-# Event processing rate
-rate(bpfview_events_total[5m])
-
-# Error rate by event type
-rate(bpfview_processing_errors_total[5m])
-
-# Process cache hit ratio
-bpfview_cache_hits_total / (bpfview_cache_hits_total + bpfview_cache_misses_total)
-```
-
-## Advanced Troubleshooting
-
-### Performance Issues
-
-1. **High CPU Usage**:
-   - Check for high-volume processes and exclude them:
-     ```bash
-     sudo bpfview --log-level debug --exclude-comm "high-volume-process"
-     ```
-   - Reduce process information level:
-     ```bash
-     sudo bpfview --process-level minimal
-     ```
-   - Check process cache hit ratio in metrics
-   - Monitor eBPF map usage statistics
-
-2. **Memory Usage Problems**:
-   - Adjust process cache size:
-     ```bash
-     sudo bpfview --process-cache-size 5000
-     ```
-   - Set shorter cache timeout:
-     ```bash
-     sudo bpfview --cache-timeout 30m
-     ```
-   - Monitor memory usage with `pmap -x $(pidof bpfview)`
-
-3. **Disk Space Issues**:
-   - Implement log rotation
-   - Use more selective filtering
-   - For SQLite format, implement regular vacuuming:
-     ```bash
-     sqlite3 bpfview.db "VACUUM;"
-     ```
-
-### Debug Logging
-
-Enable verbose logging for troubleshooting:
-
-```bash
-# Debug level logging
+# Debug level
 sudo bpfview --log-level debug
 
-# Trace level for maximum verbosity (high volume!)
+# Trace level (maximum verbosity)
 sudo bpfview --log-level trace
 ```
 
-Inspect specific components:
-```bash
-# Follow debug logs for specific components
-sudo bpfview --log-level debug | grep '\[binary\]'
-sudo bpfview --log-level debug | grep '\[sigma\]'
-```
+### Output Formats
 
-### Common Error Resolution
-
-1. **eBPF Verification Errors**:
-   - Ensure kernel headers match running kernel
-   - Check for BPF restrictions in seccomp profiles
-   - Verify eBPF features are enabled in kernel
-
-2. **Missing Events**:
-   - Check process exclusion filters
-   - Verify process level configuration
-   - Ensure proper permissions for /proc access
-   - Check for race conditions in high-volume environments
-
-3. **Sigma Rule Issues**:
-   - Validate rule syntax with `--log-level debug`
-   - Check field names match exactly
-   - Verify rule logsource category matches event type
-   - Monitor sigma queue size with metrics
-
-4. **Binary Analysis Failures**:
-   - Check permissions for binary files
-   - Verify package database access
-   - Inspect specific binary analysis with debug logging
-   - Check for library dependencies for ELF parsing
-
-## Advanced Topics
-
-### Custom Metrics Collection
-
-BPFView's Prometheus metrics can be extended with custom metrics:
+BPFView supports multiple output formats:
 
 ```bash
-# Enable histogram metrics for latency analysis
-sudo bpfview --with-histograms
+# Text format (default) - pipe-delimited logs
+sudo bpfview --format text
 
-# Enable per-process metrics collection
-sudo bpfview --process-metrics
+# JSON format - single events file
+sudo bpfview --format json
+
+# Elastic Common Schema format
+sudo bpfview --format json-ecs
+
+# Graylog Extended Log Format
+sudo bpfview --format gelf
+
+# SQLite database
+sudo bpfview --format sqlite
 ```
 
-### Event Enrichment
-
-Enhance events with additional context:
+### Output Customization
 
 ```bash
-# Add GeoIP information for external connections
-sudo bpfview --with-geoip
+# Add timestamps to console output
+sudo bpfview --log-timestamp
 
-# Add process reputation data
-sudo bpfview --with-reputation=/path/to/repodb
+# Include hostname in all events
+sudo bpfview --add-hostname
+
+# Include host IP in all events
+sudo bpfview --add-ip
+
+# Specify a custom SQLite database path
+sudo bpfview --format sqlite --dbfile /path/to/custom/bpfview.db
 ```
 
-### CPU Pinning
+## Multi-Host Deployment
 
-For optimal performance on multi-core systems:
+For distributed environments:
 
 ```bash
-# Pin ring buffer processing to specific CPUs
-sudo bpfview --cpu-pin 0,1,2,3
-
-# Set process priority
-sudo nice -n -10 bpfview
+# Include host details for centralized collection
+sudo bpfview --add-hostname --add-ip --format json-ecs
 ```
 
-### Custom eBPF Map Configurations
+## Metrics Endpoint
 
-Fine-tune eBPF map settings:
+BPFView exposes Prometheus metrics on port 2112 for monitoring event processing:
 
 ```bash
-# Larger connection tracking table
-sudo bpfview --conn-map-size 65536
-
-# Custom process map size
-sudo bpfview --process-map-size 16384
+# View metrics
+curl localhost:2112/metrics
 ```
 
-## Appendix: Environment Variables
+## Command Combinations for Specific Use Cases
 
-BPFView respects several environment variables for configuration:
+### Security Monitoring
 
-| Variable                   | Description                           | Example                         |
-|----------------------------|---------------------------------------|---------------------------------|
-| `BPFVIEW_LOG_LEVEL`        | Sets logging level                    | `export BPFVIEW_LOG_LEVEL=debug` |
-| `BPFVIEW_LOG_DIR`          | Log directory                         | `export BPFVIEW_LOG_DIR=/var/log/bpfview` |
-| `BPFVIEW_SIGMA_DIR`        | Sigma rules directory                 | `export BPFVIEW_SIGMA_DIR=/etc/sigma` |
-| `BPFVIEW_FORMAT`           | Output format                         | `export BPFVIEW_FORMAT=json-ecs` |
-| `BPFVIEW_PROCESS_LEVEL`    | Process info collection level         | `export BPFVIEW_PROCESS_LEVEL=basic` |
-| `BPFVIEW_EXCLUDE_COMM`     | Processes to exclude                  | `export BPFVIEW_EXCLUDE_COMM="chronyd,sshd"` |
-| `BPFVIEW_CACHE_SIZE`       | Process cache size                    | `export BPFVIEW_CACHE_SIZE=10000` |
-| `BPFVIEW_CACHE_TIMEOUT`    | Cache entry timeout                   | `export BPFVIEW_CACHE_TIMEOUT=1h` |
-| `BPFVIEW_METRICS_ADDR`     | Prometheus metrics endpoint           | `export BPFVIEW_METRICS_ADDR=":2112"` |
-| `BPFVIEW_BINARY_DB`        | Binary analyzer database path         | `export BPFVIEW_BINARY_DB=/var/db/binary.db` |
+```bash
+# Comprehensive security monitoring
+sudo bpfview --hash-binaries --package-verify --sigma ./sigma --format json-ecs
+
+# Focus on suspicious TLS connections
+sudo bpfview --hash-binaries --sigma ./sigma --tls-version 1.0,1.1
+```
+
+### Container Monitoring
+
+```bash
+# Monitor all container activity
+sudo bpfview --container-id "*" --hash-binaries
+
+# Focus on container network connections
+sudo bpfview --container-id "*" --exclude-comm "chronyd,systemd" --format json
+```
+
+### High-Traffic Environments
+
+```bash
+# Optimize for high-volume servers
+sudo bpfview --process-level minimal --exclude-comm "nginx,postgres" --exclude-port "80,443,5432"
+
+# Reduce resource usage with focused monitoring
+sudo bpfview --process-level basic --process-cache-size 5000 --cache-timeout 1h
+```
+
+### Forensic Analysis
+
+```bash
+# Detailed logging of all process activity
+sudo bpfview --process-level full --hash-binaries --format sqlite --add-hostname --add-ip
+
+# Track process trees of specific applications
+sudo bpfview --comm "suspicious-app" --tree --hash-binaries --package-verify
+```
