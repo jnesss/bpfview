@@ -140,6 +140,9 @@ func (se *SigmaEngine) handleEvent(evt DetectionEvent) {
 		relevantRules = se.processRules
 	case "network_connection", "dns_query":
 		relevantRules = se.networkRules
+	case "binary":
+		relevantRules = se.processRules // Use process rules for binary events?
+
 	default:
 		return
 	}
@@ -470,8 +473,8 @@ func isProcessCreationRule(rule sigma.Rule) bool {
 		}
 	}
 
-	// Check for process creation category/service
-	if rule.Logsource.Category == "process_creation" {
+	// Check for process creation or binary category
+	if rule.Logsource.Category == "process_creation" || rule.Logsource.Category == "binary" {
 		return true
 	}
 
