@@ -349,14 +349,12 @@ func main() {
 						binaryPackageCount.WithLabelValues("unknown").Inc()
 					}
 
-					// Log to console
-					if metadata.IsFromPackage && !metadata.PackageVerified {
-						globalLogger.Warning("binary", "Modified system binary detected: %s (Package: %s %s)",
-							metadata.Path, metadata.PackageName, metadata.PackageVersion)
-					} else {
-						globalLogger.Info("binary", "New binary detected: %s (%s %s)",
-							metadata.Path, metadata.ELFType, metadata.Architecture)
-					}
+					// Log to console - neutral, informational only
+					globalLogger.Info("binary", "Binary analysis: %s (Package: %s %s, Verified: %v)",
+						metadata.Path,
+						metadata.PackageName,
+						metadata.PackageVersion,
+						metadata.PackageVerified)
 				})
 
 				// Log enabled features
