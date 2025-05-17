@@ -951,6 +951,7 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 	// Calculate hash if enabled and not already set
 	if globalEngine != nil && globalEngine.config.HashBinaries &&
 		info.BinaryHash == "" && info.ExePath != "" && info.ExePath != "[kernel]" {
+
 		if hash, err := CalculateMD5(info.ExePath); err == nil {
 			info.BinaryHash = hash
 			operationResults.WithLabelValues("process", "hash_calc", "success").Inc()
@@ -966,11 +967,50 @@ func FinalizeProcessInfo(info *types.ProcessInfo) {
 					info.IsFromPackage = metadata.IsFromPackage
 					info.PackageVerified = metadata.PackageVerified
 
-					// Log warning for modified system binaries
-					if info.IsFromPackage && !info.PackageVerified {
-						globalLogger.Warning("process", "Process using modified system binary: %s (Package: %s %s)",
-							info.ExePath, info.PackageName, info.PackageVersion)
+					// If Sigma detection is enabled and we have binary metadata, send binary event
+					if globalSigmaEngine != nil && info.BinaryHash != "" {
+						// Create a map with all available binary metadata for Sigma rules to match against
+						sigmaEvent := map[string]interface{}{
+							// Process context
+							"Image":            info.ExePath,
+							"ProcessName":      info.Comm,
+							"User":             info.Username,
+							"MD5Hash":          info.BinaryHash,
+							"CmdLine":          info.CmdLine,
+							"CurrentDirectory": info.WorkingDir,
+							"PID":              info.PID,
+
+							// Binary metadata
+							"IsELF":              metadata.IsELF,
+							"ELFType":            metadata.ELFType,
+							"Architecture":       metadata.Architecture,
+							"IsStaticallyLinked": metadata.IsStaticallyLinked,
+							"ImportedLibraries":  strings.Join(metadata.ImportedLibraries, ","),
+							"ImportCount":        metadata.ImportedSymbolCount,
+							"ExportCount":        metadata.ExportedSymbolCount,
+
+							// Package verification
+							"IsFromPackage":   metadata.IsFromPackage,
+							"PackageName":     metadata.PackageName,
+							"PackageVersion":  metadata.PackageVersion,
+							"PackageVerified": metadata.PackageVerified,
+							"PackageManager":  metadata.PackageManager,
+						}
+
+						// Create detection event for binary
+						detectionEvent := DetectionEvent{
+							EventType:       "binary",
+							Data:            sigmaEvent,
+							Timestamp:       info.StartTime,
+							ProcessUID:      info.ProcessUID,
+							PID:             info.PID,
+							DetectionSource: "binary",
+						}
+
+						// Submit non-blocking to Sigma engine
+						globalSigmaEngine.SubmitEvent(detectionEvent)
 					}
+
 				} else {
 					// Binary not analyzed yet, submit it asynchronously
 					go func(exePath, md5Hash string) {

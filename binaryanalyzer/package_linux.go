@@ -91,18 +91,31 @@ func (r *rpmVerifier) Verify(path string) (PackageInfo, error) {
 		binaryModified := false
 
 		for _, line := range outputLines {
-			// Get the actual file path from the line (usually at the end of the line)
-			parts := strings.Split(line, " ")
-			if len(parts) < 2 {
+			// Skip empty lines
+			trimmedLine := strings.TrimSpace(line)
+			if trimmedLine == "" {
 				continue
 			}
 
-			// Get the actual file path - usually the last part after spaces
-			filePath := strings.TrimSpace(parts[len(parts)-1])
+			// The rpm -V output format is typically:
+			// [flags] [spaces] [path]
+			// The flags part is always 9 characters (for the 9 verification flags) plus a possible trailing character
+			// We need to find where the path starts
 
-			// Only consider this a match if it's the exact path we're looking for
-			if filePath == path && !strings.Contains(line, " c ") {
+			// First, split the line by whitespace - this handles multiple spaces
+			parts := strings.Fields(trimmedLine)
+			if len(parts) < 2 {
+				// Not enough parts to have both flags and path
+				continue
+			}
+
+			// The last part should be the file path
+			filePath := parts[len(parts)-1]
+
+			if filePath == path {
+				// This is our file and it's in the verification output, meaning it failed verification
 				binaryModified = true
+				fmt.Printf("DEBUG: MATCH! Binary is modified.\n")
 				break
 			}
 		}
